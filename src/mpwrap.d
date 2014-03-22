@@ -36,20 +36,20 @@ class MPRun {
 	}
 
 	void linkInput(EventDispatcher ed, t_fd fd) {
-		this.fd_i = ed.WrapFD(fd, &ed.FailIO, &ed.FailIO);
+		this.fd_i = ed.WrapFD(fd);
 		auto bw_stdin = new BufferWriter(ed, this.p.fd_i);
-		this.fd_i.setCallbacks(makeCopier(this.fd_i, &bw_stdin.write), &ed.FailIO);
+		this.fd_i.setCallbacks(makeCopier(this.fd_i, &bw_stdin.write));
 		this.fd_i.AddIntent(IOI_READ);
 	}
 
 	void start(EventDispatcher ed) {
 		this.p.Spawn(this.argv);
-		this.fd_o = ed.WrapFD(this.p.fd_o, &ed.FailIO, &ed.FailIO);
-		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo), &ed.FailIO);
+		this.fd_o = ed.WrapFD(this.p.fd_o);
+		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo));
 		this.fd_o.AddIntent(IOI_READ);
 
-		this.fd_e = ed.WrapFD(this.p.fd_e, &ed.FailIO, &ed.FailIO);
-		this.fd_e.setCallbacks(makeCopier(this.fd_e, this.oe), &ed.FailIO);
+		this.fd_e = ed.WrapFD(this.p.fd_e);
+		this.fd_e.setCallbacks(makeCopier(this.fd_e, this.oe));
 		this.fd_e.AddIntent(IOI_READ);
 	}
 }
