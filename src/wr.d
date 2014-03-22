@@ -8,6 +8,8 @@ import eudorina.logging;
 
 import vtrack.mpwrap;
 
+// This disables line-buffering on the specified terminal fd.
+// Stdin typically is one in interactive use, and line-buffering is inappropriate for programs like mplayer.
 void setBufs(t_fd fd) {
 	termios tio;
 	if (tcgetattr(fd, &tio)) {
