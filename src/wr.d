@@ -41,7 +41,7 @@ int main(string[] args) {
 	mprun.start(ed);
 	mprun.linkErr(ed);
 
-	ed.NewTimer(&mprun.copyTerm, dur!"msecs"(200));
+	//ed.NewTimer(&mprun.copyTerm, dur!"msecs"(200));
 	ed.Run();
 
 	return 0;
