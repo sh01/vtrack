@@ -1,5 +1,6 @@
 import core.stdc.errno;
 import core.sys.posix.termios;
+import core.time;
 import std.stdio;
 import std.string;
 
@@ -34,12 +35,13 @@ int main(string[] args) {
 	auto bw_stderr = new BufferWriter(ed, 2);
 
 	auto mprun = new MPRun(args[1..args.length], &bw_stdout.write, &bw_stderr.write);
-	mprun.start(ed);
 
 	setBufs(0);
-	stdin.setvbuf(0, _IONBF);
-	mprun.linkInput(ed, 0);
+	mprun.setupPty(ed, 0);
+	mprun.start(ed);
+	mprun.linkErr(ed);
 
+	ed.NewTimer(&mprun.copyTerm, dur!"msecs"(200));
 	ed.Run();
 
 	return 0;
