@@ -29,8 +29,7 @@ class MPRun {
 	SubProcess p;
 	td_io_writer oo, oe;
 
-	FD fd_o, fd_e, fd_i; // subprocess stdio pipe ends
-    FD fd_i_s; // data source to copy to subprocess stdin
+	FD fd_o, fd_e; // subprocess stdio pipe ends
 
 	this(string[] argv, td_io_writer oo, td_io_writer oe) {
 		this.argv = argv;
@@ -41,17 +40,12 @@ class MPRun {
 
 	void setupPty(EventDispatcher ed, t_fd fd_i_source) {
 		auto fd_pty_master = this.p.setupPty();
-		auto fd_pty_slave = this.p.fd_i;
-		
-		auto bw_stdin = new BufferWriter(ed, fd_pty_master);
+		auto fd_pty_slave = this.p.fd_o;
 
-		//this.fd_i_s = ed.WrapFD(fd_i_source);
-		//this.fd_i_s.setCallbacks(makeCopier(this.fd_i_s, &bw_stdin.write));
-		//this.fd_i_s.AddIntent(IOI_READ);
-
+		// We don't want to use the pty for subprocess stdin; interfacing works best and easiest if mplayer just takes our stdin and manipulates it however it feels is appropriate. The stdout pty is required, though, since it doesn't even try to manipulate stdin settings if that's not there.
 		this.p.fd_i = 0;
-		this.fd_i = bw_stdin.fd;
-		this.fd_o = bw_stdin.fd;
+
+		this.fd_o = ed.WrapFD(fd_pty_master);
 		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo));
 		this.fd_o.AddIntent(IOI_READ);
 
@@ -59,21 +53,6 @@ class MPRun {
 		winsize wsz;
 		ioctl(fd_i_source, TIOCGWINSZ, &wsz);
 		ioctl(fd_pty_master, TIOCSWINSZ, &wsz);
-	}
-
-	void linkInput(EventDispatcher ed, t_fd fd, t_fd fd_slave=-1) {
-		if (fd_slave == -1) fd_slave = this.p.fd_i;
-		this.fd_i = ed.WrapFD(fd);
-		auto bw_stdin = new BufferWriter(ed, fd_slave);
-		this.fd_i.setCallbacks(makeCopier(this.fd_i, &bw_stdin.write));
-		this.fd_i.AddIntent(IOI_READ);
-	}
-
-	void linkOut(EventDispatcher ed, t_fd fd=-1) {
-		if (fd == -1) fd = this.p.fd_o;
-		this.fd_o = ed.WrapFD(fd);
-		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo));
-		this.fd_o.AddIntent(IOI_READ);
 	}
 
 	void linkErr(EventDispatcher ed, t_fd fd=-1) {
