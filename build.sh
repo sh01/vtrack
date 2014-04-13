@@ -8,7 +8,7 @@ mkdir -p build/$INC build/$LIB build/bin 2>/dev/null
 rm -rf build/$INC/* build/$LIB/* build/bin/* 2>/dev/null
 
 pushd build
-for bn in mpwrap; do
+for bn in mpwrap base; do
 	ofn=${bn}.o
 	CMD0="$CC -g -o $ofn -c -fversion=Linux -I../../eudorina/build/include/ -L../../eudorina/build/lib/ -fintfc -fintfc-dir=${INC} ../src/${bn}.d"
 	CMD1="ar rcs ${LIB}/lib${bn}.a $ofn"
@@ -19,7 +19,7 @@ done
 
 popd
 
-for bn in wr; do
-	CMD0="gdc -g -o build/bin/${bn} -Ibuild/include/ -I../eudorina/build/include/ -Lbuild/obj/vtrack/ -L../eudorina/build/lib/eudorina/ -fversion=Linux src/${bn}.d -lmpwrap -lio -ltext -llogging"
+for bn in wr vtui; do
+	CMD0="gdc -g -o build/bin/${bn} -Ibuild/include/ -I../eudorina/build/include/ -Lbuild/obj/vtrack/ -L../eudorina/build/lib/eudorina/ -L../eudorina/build/lib/eudorina/db/ -fversion=Linux src/${bn}.d -lbase -lsqlit3 -lsqlite3 -lmpwrap -lio -ltext -llogging"
 	echo $CMD0; $CMD0
 done
