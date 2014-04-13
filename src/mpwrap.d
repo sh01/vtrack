@@ -1,6 +1,6 @@
 import core.stdc.errno;
 import core.sys.posix.termios;
-import core.sys.posix.unistd;
+import core.sys.posix.unistd: read;
 import core.sys.posix.sys.ioctl;
 
 import eudorina.io;
@@ -16,7 +16,7 @@ td_voidfunc makeCopier(size_t bufsize=1024)(FD fd, td_io_writer out_) {
 		char buf[bufsize];
 		auto v = read(fd.fd, buf.ptr, bufsize);
 		if (v <= 0) {
-			fd.Close();
+			fd.close();
 			return;
 		}
 		out_(buf[0..v]);
