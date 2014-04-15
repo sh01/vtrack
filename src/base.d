@@ -1,5 +1,6 @@
 import std.algorithm: cmp;
 import std.container;
+import std.conv: to;
 import std.datetime;
 import std.string;
 
@@ -18,13 +19,38 @@ class StorageError: Exception {
 	};
 }
 
+enum TWatchState {
+	TODO, DONE, SKIPPED
+}
+
 class TEpisode {
-	SysTime ts_add;
-	int length;
+private:
+	vt_id _id;
+public:
+	double wfrac = 0;
+	SysTime ts_add, wfrac_ts_min;
+	TWatchState watch_state;
+	int length = -1;
 	string[] fns;
-	this (SysTime ts_add, int length) {
+	this (vt_id id, SysTime ts_add, int length, TWatchState watch_state, double wfrac, SysTime wfrac_ts_min) {
+		this._id = id;
 		this.ts_add = ts_add;
 		this.length = length;
+		this.watch_state = watch_state;
+		this.wfrac = wfrac;
+		this.wfrac_ts_min = wfrac_ts_min;
+	}
+	this() {
+		this.ts_add = Clock.currTime();
+		this.wfrac_ts_min = unixTimeToStdTime(0);
+	}
+	void update(SqliteStmt s) {
+		s.reset();
+		s.bind(this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime(), this._id);
+		s.step();
+	}
+	void bindValues(SqliteStmt s, vt_id show_id, vt_id idx) {
+		s.bind(show_id, idx, this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime());
 	}
 }
 
@@ -113,11 +139,10 @@ private:
 class TStorage {
 private:
 	SqliteConn db_conn;
-	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
+	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep, s_newep;
 public:
 	TShow[] shows;
 	TShowSet[] showsets;
-	//RedBlackTree!(TShowAlias) show_aliases;
 
 	this(SqliteConn c) {
 		this.db_conn = c;
@@ -126,7 +151,8 @@ public:
 		this.s_getshowbyid = c.prepare(this.SQL_GETSHOWBYID ~ ";");
 		this.s_getshowsets = c.prepare("SELECT id,desc FROM show_sets;");
 		this.s_getshowsetms = c.prepare("SELECT id,show_id FROM show_set_in;");
-		this.s_geteps = c.prepare("SELECT id,show_id,idx,ts_add,length FROM episodes;");
+		this.s_geteps = c.prepare(this.SQL_GETEPS ~ ";");
+		this.s_getepbyshowinfo = c.prepare(this.SQL_GETEPBYSHOWINFO ~ ";");
 
 		this.s_show_add = c.prepare("INSERT " ~ TShow.sql_write);
 		this.s_show_rep = c.prepare("REPLACE " ~ TShow.sql_write);
@@ -134,6 +160,8 @@ public:
 		this.s_showset_add = c.prepare("INSERT " ~ TShowSet.sql_write_base);
 		this.s_showset_rep = c.prepare("REPLACE " ~ TShowSet.sql_write_base);
 		this.s_showsetm_rep = c.prepare("REPLACE " ~ TShowSet.sql_write_members);
+
+		this.s_newep = c.prepare(this.SQL_NEWEP);
 	}
 
 	private void readShows() {
@@ -178,13 +206,12 @@ public:
 			set.shows.stableInsert(getShow(id));
 		}
 		for (s = this.s_geteps, s.reset(); s.step();) {
-			long ep_id;
-			int length;
-			s.getRow(&ep_id, &show_id, &id, &ts_unix, &length);
-			ts = SysTime(unixTimeToStdTime(ts_unix));
+			vt_id idx, ep_id;
+			s.getRow(&ep_id, &show_id, &idx);
 
-			auto eps = getShow(show_id).eps;
-			add_item(&eps, new TEpisode(ts, length));
+			auto eps = &getShow(show_id).eps;
+			if (eps.length <= idx) eps.length = idx+1;
+			this._storeEpFromSql(s);
 		}
 	}
 	void addShow(TShow show) {
@@ -240,13 +267,65 @@ public:
 	}
 
 	private void _verifyShow(TShow show) {
-		if (this.shows[show._id] !is show) throw new StorageError(format("Attempted to add unregistered show to set."));
+		if (this.shows[show._id] !is show) throw new StorageError(format("Passed in unregistered show."));
 	}
 //---------------------------------------------------------------- Alias manipulation
 	void addShowAlias(TShow show, string key) {
 		this._verifyShow(show);
 		auto a = new TShowAlias(show.id, key);
 		a.write(this.s_showalias_rep);
+	}
+//---------------------------------------------------------------- Episode acces
+	private immutable static string SQL_GETEPS = "SELECT id,show_id,idx,ts_add,length,watch_state,wfrac,wfrac_ts_min FROM episodes";
+	private immutable static string SQL_GETEPBYSHOWINFO = SQL_GETEPS ~ " WHERE ((show_id == ?) AND (idx == ?))";
+	private TEpisode _storeEpFromSql(SqliteStmt stmt) {
+		TEpisode rv;
+		vt_id id, show_id, idx;
+		long ts_add, wfrac_ts_min;
+		int length, ws_;
+		double wfrac;
+		stmt.getRow(&id, &show_id, &idx, &ts_add, &length, &ws_, &wfrac, &wfrac_ts_min);
+		rv = new TEpisode(id, SysTime(unixTimeToStdTime(ts_add)), length, to!TWatchState(ws_), wfrac, SysTime(unixTimeToStdTime(wfrac_ts_min)));
+		this.shows[show_id].eps[idx] = rv;
+		return rv;
+	}
+
+	private immutable static string SQL_NEWEP = "INSERT INTO episodes(show_id,idx,ts_add,length,watch_state,wfrac,wfrac_ts_min) VALUES (?,?,?,?,?,?,?);";
+	TEpisode getEpisode(TShow show, vt_id idx, bool make_new = false) {
+		this._verifyShow(show);
+		TEpisode rv;
+		// Look up episode in ram
+		if (show.eps.length <= idx) {
+			show.eps.length = idx+1;
+		} else {
+			rv = show.eps[idx];
+			if (rv !is null) return rv;
+		}
+		// Get episode from database
+		auto s = this.s_getepbyshowinfo;
+		s.reset();
+		s.bind(show.id, idx);
+		if (s.step()) return this._storeEpFromSql(s);
+
+		// No dice.
+		if (!make_new) return null;
+
+		// We'll need to build one from scratch.
+		rv = new TEpisode();
+		auto s2 = this.s_newep;
+		s2.reset();
+		rv.bindValues(s2, show.id, idx);
+		s2.step();
+		// Get the unique id for the new episode row.
+		s.reset();
+		s.bind(show.id, idx);
+		s.step();
+		vt_id id;
+		s.getRow(&id);
+		// Update id field, store episode value, and return it.
+		rv._id = id;
+		show.eps[idx] = rv;
+		return rv;
 	}
 //---------------------------------------------------------------- show set manipulation
 	void addShowSetMember(TShowSet set, TShow show) {
