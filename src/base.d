@@ -44,6 +44,7 @@ public:
 		this.ts_add = Clock.currTime();
 		this.wfrac_ts_min = unixTimeToStdTime(0);
 	}
+	vt_id id() { return this._id; }
 	void update(SqliteStmt s) {
 		s.reset();
 		s.bind(this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime(), this._id);
@@ -139,20 +140,26 @@ private:
 class TStorage {
 private:
 	SqliteConn db_conn;
-	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep, s_newep;
+	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_getpathsbyep, s_reppath, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep, s_newep;
 public:
 	TShow[] shows;
 	TShowSet[] showsets;
 
 	this(SqliteConn c) {
 		this.db_conn = c;
+
 		this.s_getshows = c.prepare(this.SQL_GETSHOWS ~ ";");
 		this.s_getshowbyalias = c.prepare(this.SQL_GETSHOWBYALIAS ~ ";");
 		this.s_getshowbyid = c.prepare(this.SQL_GETSHOWBYID ~ ";");
+
 		this.s_getshowsets = c.prepare("SELECT id,desc FROM show_sets;");
 		this.s_getshowsetms = c.prepare("SELECT id,show_id FROM show_set_in;");
+
 		this.s_geteps = c.prepare(this.SQL_GETEPS ~ ";");
 		this.s_getepbyshowinfo = c.prepare(this.SQL_GETEPBYSHOWINFO ~ ";");
+
+		this.s_getpathsbyep = c.prepare(this.SQL_GETPATHSBYEP);
+		this.s_reppath = c.prepare(this.SQL_REPPATH);
 
 		this.s_show_add = c.prepare("INSERT " ~ TShow.sql_write);
 		this.s_show_rep = c.prepare("REPLACE " ~ TShow.sql_write);
@@ -275,7 +282,7 @@ public:
 		auto a = new TShowAlias(show.id, key);
 		a.write(this.s_showalias_rep);
 	}
-//---------------------------------------------------------------- Episode acces
+//---------------------------------------------------------------- Episode access
 	private immutable static string SQL_GETEPS = "SELECT id,show_id,idx,ts_add,length,watch_state,wfrac,wfrac_ts_min FROM episodes";
 	private immutable static string SQL_GETEPBYSHOWINFO = SQL_GETEPS ~ " WHERE ((show_id == ?) AND (idx == ?))";
 	private TEpisode _storeEpFromSql(SqliteStmt stmt) {
@@ -326,6 +333,29 @@ public:
 		rv._id = id;
 		show.eps[idx] = rv;
 		return rv;
+	}
+//---------------------------------------------------------------- pathname access
+	private immutable static string SQL_GETPATHS = "SELECT id,path FROM episode_paths";
+	private immutable static string SQL_GETPATHSBYEP = SQL_GETPATHS ~ " WHERE (id == ?) ORDER BY rowid DESC;";
+	string[] getPaths(TEpisode ep) {
+		string[] rv;
+		auto s = this.s_getpathsbyep;
+		s.reset();
+		s.bind(ep._id);
+		vt_id id;
+		string path;
+		for (; s.step();) {
+			s.getRow(&id, &path);
+			rv ~= path;
+		}
+		return rv;
+	}
+	private immutable static string SQL_REPPATH = "REPLACE INTO episode_paths(id,path) VALUES (?,?);";
+	void addPath(TEpisode ep, string path) {
+		auto s = this.s_reppath;
+		s.reset();
+		s.bind(ep._id, path);
+		s.step();
 	}
 //---------------------------------------------------------------- show set manipulation
 	void addShowSetMember(TShowSet set, TShow show) {

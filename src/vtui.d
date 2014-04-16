@@ -1,6 +1,7 @@
 import std.conv: to;
 import std.datetime: Clock, SysTime, DateTime;
 import std.exception: assumeUnique;
+import std.file: getLinkAttributes;
 import std.format: formattedRead;
 import std.getopt;
 import std.path: expandTilde, buildPath;
@@ -25,6 +26,13 @@ class InvalidShowSpec: Exception {
 class InvalidIntSpec: Exception {
 	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
 		auto msg = format("Invalid integer %s.", cescape(spec));
+		super(msg, file, line, next);
+	};
+}
+
+class InvalidEpSpec: Exception {
+	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		auto msg = format("Unknown episode %s.", spec);
 		super(msg, file, line, next);
 	};
 }
@@ -177,6 +185,51 @@ class CmdListEps: Cmd {
 	}
 }
 
+class CmdAddEpPath: Cmd {
+	this() {
+		this.min_args = 3;
+		this.commands = ["addpath"];
+		this.usage = "addpath <show_spec> <ep index> <path>";
+	}
+	override int run (CLI c, string[] args) {
+		auto ep = c.getEpisodeExc(args[0], args[1]);
+		auto path = args[2];
+		if (!seePath(expandTilde(path))) {
+			writef("Error: Unable to verify existence of path %s.\n", cescape(path));
+			return 22;
+		}
+		c.store.addPath(ep, args[2]);
+		writef("Added path: %d -> %s\n", ep.id, cescape(args[2]));
+		return 0;
+	}
+}
+
+class CmdDisplayEpPaths: Cmd {
+	this() {
+		this.min_args = 2;
+		this.commands = ["lspaths"];
+		this.usage = "lspaths <show_spec> <ep index>";
+	}
+	override int run (CLI c, string[] args) {
+		auto ep = c.getEpisodeExc(args[0], args[1]);
+		auto paths = c.store.getPaths(ep);
+		writef("== %d\n", ep.id);
+		foreach (path; paths) {
+			writef("  %s\n", cescape(path));
+		}
+		return 0;
+	}
+}
+
+bool seePath(const char[] path) {
+	try {
+		getLinkAttributes(path);
+	} catch (std.file.FileException e) {
+		return false;
+	}
+	return true;
+}
+
 bool parseInt(string spec, long *o) {
 	if (spec == "") return false;
 	uint vc;
@@ -216,7 +269,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdDisplayShow()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
@@ -231,6 +284,14 @@ public:
 	}
 	TEpisode getEpisode(TShow show, vt_id idx) {
 		return this.store.getEpisode(show, idx, false);
+	}
+	TEpisode getEpisodeExc(string show_spec, string idx_spec, TShow *show_out = null) {
+		TShow show = this.getShow(show_spec);
+		long idx = parseIntExc(idx_spec);
+		auto ep = this.getEpisode(show, idx);
+		if (ep is null) throw new InvalidEpSpec(format("%d::%d", show.id, idx));
+		if (show_out != null) *show_out = show;
+		return ep;
 	}
 	string formatTime(SysTime st) {
 		auto dt = cast(DateTime)st;
@@ -294,6 +355,9 @@ public:
 		} catch (InvalidIntSpec e) {
 			writef("Error: %s\n", e.msg);
 			return 5;
+		} catch (InvalidEpSpec e) {
+			writef("Error: %s\n", e.msg);
+			return 6;
 		}
 		return rv;
 	}
