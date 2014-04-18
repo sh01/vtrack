@@ -308,7 +308,7 @@ class CmdPlay: Cmd {
 	void passStderr(char[] data) {
 		this.bw_stderr.write(data);
 		auto m = matchFirst(data, this.RE_PS);
-		if (m.length == 0) return; //Not a (full) status line; while they can get split up, this is rare, and we can afford some sloppiness.
+		if (m.length == 0) return; //Not a (full) regular status line; while they can get split up, this is rare, and we can afford some sloppiness.
 		if (m_prev != m[0]) {
 			m_prev = m[0].idup;
 			match_count = 1;
@@ -368,7 +368,7 @@ class CmdPlay: Cmd {
 			logf(20, "Selecting first to-watch episode from show %d:%s.", show.id, cescape(show.title));
 			// TODO: Insert ep-loading cmd here
 			foreach (ep_; show.eps) {
-				if (!ep_.toWatch()) continue;
+				if ((ep_ is null) || !ep_.toWatch()) continue;
 				ep = ep_;
 				break;
 			}
