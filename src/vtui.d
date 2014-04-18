@@ -225,6 +225,25 @@ class CmdDisplayEpPaths: Cmd {
 	}
 }
 
+class CmdDisplayTraces: Cmd {
+	this() {
+		this.min_args = 2;
+		this.commands = ["lstrace"];
+		this.usage = "lstrace <show_spec> <ep index>";
+	}
+	override int run (CLI c, string[] args) {
+		auto ep = c.getEpisodeExc(args[0], args[1]);
+		writef("== %d\n", ep.id);
+		BitMask m = new BitMask;
+		foreach (trace; c.store.getTraces(ep)) {
+			writef("  %3d:   %s %s %s\n", trace.id, c.formatTime(trace.ts_start), c.formatTime(trace.ts_end), cescape(cast(char[])trace.m.mask));
+			m |= trace.m;
+		}
+		writef("Cumulative mask: %s\n", cescape(cast(char[])m.mask));
+		return 0;
+	}
+}
+
 int parseMpTime(const(char)[] tspec) {
 	int h,m,rv;
 	formattedRead(tspec, "%d:%d:%d", &h, &m, &rv);
@@ -238,7 +257,7 @@ class CmdPlay: Cmd {
 	TEpisode ep;
 	TStorage store;
 	TWatchTrace trace = null;
-	// In its standard config, mpv prints about 30 of these a second. A limit of 10 seems reasonable.
+	// In its standard config, mpv prints about 30 of these a second. A threshold of 10 seems reasonable.
 	int status_rep_count_limit = 10;
 	int push_delay = 16;
 	this() {
@@ -269,6 +288,7 @@ class CmdPlay: Cmd {
 			if (ts_now > ep_length) {
 				logf(30, "Beyond end of ep: %d > %d. Ignoring status line.", ts_now, ep_length);
 			} else {
+				//logf(20, "DO0: %d", ts_now);
 				if (this.trace is null) {
 					this.trace = this.store.newTrace(this.ep);
 					trace.m.setLength(ep_length);
@@ -288,9 +308,9 @@ class CmdPlay: Cmd {
 					this.flushData();
 					this.push_counter = 0;
 				}
+				ts_prev = ts_now;
 			}
 		}
-		//logf(20, "DO0: %s %s", cescape(m[0]), cescape(m[2]));
 	}
 	void flushData() {
 		this.trace.ts_end = Clock.currTime();
@@ -420,7 +440,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdPlay()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}

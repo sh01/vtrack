@@ -29,36 +29,45 @@ enum TWatchState {
 class TEpisode {
 private:
 	vt_id _id;
+	TWatchState _watch_state;
 public:
 	double wfrac = 0;
-	SysTime ts_add, wfrac_ts_min;
-	TWatchState watch_state;
+	SysTime ts_add, ts_sm, wfrac_ts_min;
 	int length = -1;
 	string[] fns;
-	this (vt_id id, SysTime ts_add, int length, TWatchState watch_state, double wfrac, SysTime wfrac_ts_min) {
+	this (vt_id id, SysTime ts_add, int length, TWatchState watch_state, SysTime ts_sm, double wfrac, SysTime wfrac_ts_min) {
 		this._id = id;
 		this.ts_add = ts_add;
+		this.ts_sm = ts_sm,
 		this.length = length;
-		this.watch_state = watch_state;
+		this._watch_state = watch_state;
 		this.wfrac = wfrac;
 		this.wfrac_ts_min = wfrac_ts_min;
 	}
 	this() {
 		this.ts_add = Clock.currTime();
 		this.wfrac_ts_min = unixTimeToStdTime(0);
+		this.ts_sm = unixTimeToStdTime(0);
 	}
 	vt_id id() { return this._id; }
-	private immutable static string SQL_UPDATE = "UPDATE OR ROLLBACK episodes SET ts_add=?,length=?,watch_state=?,wfrac=?,wfrac_ts_min=? WHERE (id==?);";
+	private immutable static string SQL_UPDATE = "UPDATE OR ROLLBACK episodes SET ts_add=?,length=?,watch_state=?,ts_sm=?,wfrac=?,wfrac_ts_min=? WHERE (id==?);";
 	bool toWatch() {
 		return (this.watch_state == TWatchState.TODO);
 	}
+	TWatchState watch_state() {
+		return this._watch_state;
+	}
+	void setWatchState(TWatchState s) {
+		this._watch_state = s;
+		this.ts_sm = Clock.currTime();
+	}
 	void update(SqliteStmt s) {
 		s.reset();
-		s.bind(this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime(), this._id);
+		s.bind(this.ts_add.toUnixTime(), this.length, this.watch_state, this.ts_sm.toUnixTime(), this.wfrac, this.wfrac_ts_min.toUnixTime(), this._id);
 		s.step();
 	}
 	void bindValues(SqliteStmt s, vt_id show_id, vt_id idx) {
-		s.bind(show_id, idx, this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime());
+		s.bind(show_id, idx, this.ts_add.toUnixTime(), this.length, this.watch_state, this.ts_sm.toUnixTime(), this.wfrac, this.wfrac_ts_min.toUnixTime());
 	}
 }
 
@@ -200,6 +209,15 @@ public:
 		this.ts_end = ts_start;
 		this.m = new BitMask();
 	}
+	vt_id id() { return this._id; }
+	this(SqliteStmt s) {
+		long ts_start, ts_end;
+		ubyte[] mask;
+		s.getRow(&this._id, &ts_start, &ts_end, cast(char[]*)&mask);
+		this.m = bitMaskFromCompressed(mask);
+		this.ts_start = SysTime(unixTimeToStdTime(ts_start));
+		this.ts_end = SysTime(unixTimeToStdTime(ts_end));
+	}
 
 	static immutable string SQL_UPDATE = "UPDATE OR ROLLBACK watch_traces SET mask=?,ts_end=? WHERE (id == ?);";
 	void update(SqliteStmt s) {
@@ -212,7 +230,7 @@ public:
 class TStorage {
 private:
 	SqliteConn db_conn;
-	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_newep, s_updateep, s_getpathsbyep, s_reppath, s_newtrace, s_getnewtrace, s_gettraces, s_updatetrace, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
+	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_newep, s_updateep, s_getpathsbyep, s_reppath, s_newtrace, s_getnewtrace, s_gettracemasks, s_gettraces, s_updatetrace, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
 public:
 	TShow[] shows;
 	TShowSet[] showsets;
@@ -237,6 +255,7 @@ public:
 
 		this.s_newtrace = c.prepare(this.SQL_NEWTRACE);
 		this.s_getnewtrace = c.prepare(this.SQL_GETNEWTRACE);
+		this.s_gettraces = c.prepare(this.SQL_GETTRACEMASKS);
 		this.s_gettraces = c.prepare(this.SQL_GETTRACES);
 		this.s_updatetrace = c.prepare(TWatchTrace.SQL_UPDATE);
 
@@ -360,21 +379,21 @@ public:
 		a.write(this.s_showalias_rep);
 	}
 //---------------------------------------------------------------- Episode access
-	private immutable static string SQL_GETEPS = "SELECT id,show_id,idx,ts_add,length,watch_state,wfrac,wfrac_ts_min FROM episodes";
+	private immutable static string SQL_GETEPS = "SELECT id,show_id,idx,ts_add,length,watch_state,ts_sm,wfrac,wfrac_ts_min FROM episodes";
 	private immutable static string SQL_GETEPBYSHOWINFO = SQL_GETEPS ~ " WHERE ((show_id == ?) AND (idx == ?))";
 	private TEpisode _storeEpFromSql(SqliteStmt stmt) {
 		TEpisode rv;
 		vt_id id, show_id, idx;
-		long ts_add, wfrac_ts_min;
+		long ts_add, ts_sm, wfrac_ts_min;
 		int length, ws_;
 		double wfrac;
-		stmt.getRow(&id, &show_id, &idx, &ts_add, &length, &ws_, &wfrac, &wfrac_ts_min);
-		rv = new TEpisode(id, SysTime(unixTimeToStdTime(ts_add)), length, to!TWatchState(ws_), wfrac, SysTime(unixTimeToStdTime(wfrac_ts_min)));
+		stmt.getRow(&id, &show_id, &idx, &ts_add, &length, &ws_, &ts_sm, &wfrac, &wfrac_ts_min);
+		rv = new TEpisode(id, SysTime(unixTimeToStdTime(ts_add)), length, to!TWatchState(ws_), SysTime(unixTimeToStdTime(ts_sm)), wfrac, SysTime(unixTimeToStdTime(wfrac_ts_min)));
 		this.shows[show_id].eps[idx] = rv;
 		return rv;
 	}
 
-	private immutable static string SQL_NEWEP = "INSERT INTO episodes(show_id,idx,ts_add,length,watch_state,wfrac,wfrac_ts_min) VALUES (?,?,?,?,?,?,?);";
+	private immutable static string SQL_NEWEP = "INSERT INTO episodes(show_id,idx,ts_add,length,watch_state,ts_sm,wfrac,wfrac_ts_min) VALUES (?,?,?,?,?,?,?,?);";
 	TEpisode getEpisode(TShow show, vt_id idx, bool make_new = false) {
 		this._verifyShow(show);
 		TEpisode rv;
@@ -411,7 +430,7 @@ public:
 		show.eps[idx] = rv;
 		return rv;
 	}
-	private immutable static string SQL_GETTRACES = "SELECT mask FROM watch_traces WHERE ((ep_id == ?) AND (ts_start >= ?));";
+	private immutable static string SQL_GETTRACEMASKS = "SELECT mask FROM watch_traces WHERE ((ep_id == ?) AND (ts_start >= ?));";
 	void updateEpisodeWatched(TEpisode ep, double done_threshold) {
 		if (ep.length < 1) {
 			logf(30, "Episode %s (%d) has length %d < 1; not attempting to update.", ep, ep.id, ep.length);
@@ -419,7 +438,7 @@ public:
 		}
 
 		long ts_min = ep.wfrac_ts_min.toUnixTime();
-		auto s = this.s_gettraces;
+		auto s = this.s_gettracemasks;
 		s.reset();
 		s.bind(ep.id, ts_min);
 		BitMask mask, m2;
@@ -437,7 +456,8 @@ public:
 			seconds_watched = ep.length;
 		}
 		ep.wfrac = to!double(seconds_watched)/to!double(ep.length);
-		if ((ep.watch_state == TWatchState.TODO) && (ep.wfrac >= done_threshold)) ep.watch_state = TWatchState.DONE;
+		logf(20, "Ep watch update: %d/%d -> %.4f.", seconds_watched, ep.length, ep.wfrac);
+		if ((ep.watch_state == TWatchState.TODO) && (ep.wfrac >= done_threshold)) ep.setWatchState(TWatchState.DONE);
 		ep.update(this.s_updateep);
 	}
 	void pushEp(TEpisode ep) {
@@ -486,6 +506,15 @@ public:
 	void pushTrace(TWatchTrace t) {
 		auto s = this.s_updatetrace;
 		t.update(s);
+	}
+	private immutable static string SQL_GETTRACES = "SELECT id,ts_start,ts_end,mask FROM watch_traces WHERE (ep_id == ?);";
+	TWatchTrace[] getTraces(TEpisode ep) {
+		TWatchTrace[] rv;
+		auto s = this.s_gettraces;
+		s.reset();
+		s.bind(ep.id);
+		while (s.step()) rv ~= new TWatchTrace(s);
+		return rv;
 	}
 //---------------------------------------------------------------- show set manipulation
 	void addShowSetMember(TShowSet set, TShow show) {
