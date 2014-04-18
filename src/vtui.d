@@ -5,14 +5,18 @@ import std.file: getLinkAttributes;
 import std.format: formattedRead;
 import std.getopt;
 import std.path: expandTilde, buildPath;
+import std.regex;
 import std.stdio: writef;
 import std.string;
 
+import eudorina.io: FD, BufferWriter, WNOHANG;
+import eudorina.service_aggregation: ServiceAggregate;
 import eudorina.text;
 import eudorina.logging;
 import eudorina.db.sqlit3;
 
 import vtrack.base;
+import vtrack.mpwrap;
 
 alias int delegate(string[]) td_cli_cmd;
 
@@ -221,6 +225,153 @@ class CmdDisplayEpPaths: Cmd {
 	}
 }
 
+int parseMpTime(const(char)[] tspec) {
+	int h,m,rv;
+	formattedRead(tspec, "%d:%d:%d", &h, &m, &rv);
+	rv += 60*m+3600*h;
+	return rv;
+}
+
+class CmdPlay: Cmd {
+	BufferWriter bw_stdout, bw_stderr;
+	ServiceAggregate sa = null;
+	TEpisode ep;
+	TStorage store;
+	TWatchTrace trace = null;
+	// In its standard config, mpv prints about 30 of these a second. A limit of 10 seems reasonable.
+	int status_rep_count_limit = 10;
+	int push_delay = 16;
+	this() {
+		this.min_args = 1;
+		this.commands = ["play", "p"];
+		this.usage = "play <show_spec> [ep index]";
+	}
+
+	static auto RE_PS = ctRegex!(r"^\x1b\[0mAV: ([0-9]+:[0-9][0-9]:[0-9][0-9]) / ([0-9]+:[0-9][0-9]:[0-9][0-9]) ");
+	int match_count = 0;
+	string m_prev;
+	int ts_prev = -1;
+	int push_counter = 0;
+	void passStderr(char[] data) {
+		this.bw_stderr.write(data);
+		auto m = matchFirst(data, this.RE_PS);
+		if (m.length == 0) return; //Not a (full) status line; while they can get split up, this is rare, and we can afford some sloppiness.
+		if (m_prev != m[0]) {
+			m_prev = m[0].idup;
+			match_count = 1;
+		} else {
+			match_count += 1;
+		}
+		if (match_count == status_rep_count_limit) {
+			// Figure out where we are and update our watch model accordingly.
+			int ts_now = parseMpTime(m[1]);
+			int ep_length = parseMpTime(m[2]) + 1;
+			if (ts_now > ep_length) {
+				logf(30, "Beyond end of ep: %d > %d. Ignoring status line.", ts_now, ep_length);
+			} else {
+				if (this.trace is null) {
+					this.trace = this.store.newTrace(this.ep);
+					trace.m.setLength(ep_length);
+				}
+
+				if (ep_length != this.ep.length) {
+					this.ep.length = ep_length;
+					trace.m.setLength(ep_length);
+					this.store.pushEp(this.ep);
+				}
+				// Mark this second as having been watched.
+				trace.m[ts_now] = 1;
+				this.push_counter += 1;
+				if (push_counter >= this.push_delay) {
+					// Push trace update to database.
+					//log(20, "Flush.");
+					this.flushData();
+					this.push_counter = 0;
+				}
+			}
+		}
+		//logf(20, "DO0: %s %s", cescape(m[0]), cescape(m[2]));
+	}
+	void flushData() {
+		this.trace.ts_end = Clock.currTime();
+		this.store.pushTrace(trace);
+	}
+	void processClose(FD fd) {
+		if (sa.ed.shutdown) return; // No need to be spammy about it.
+		logf(20, "Shutting down on close of FD %d.", fd.fd);
+		this.sa.ed.shutdown = 1;
+	}
+	string[] getCommand(string path) {
+		return [expandTilde("~/.vtrack/mp"), path];
+	}
+	override int run(CLI c, string[] args) {
+		double done_threshold = 0.8;
+
+		TShow show = c.getShow(args[0]);
+		if (args.length >= 2) {
+			ep = c.getEpisodeExc(args[0], args[1]);
+		} else {
+			logf(20, "Selecting first to-watch episode from show %d:%s.", show.id, cescape(show.title));
+			// TODO: Insert ep-loading cmd here
+			foreach (ep_; show.eps) {
+				if (!ep_.toWatch()) continue;
+				ep = ep_;
+				break;
+			}
+			if (ep is null) {
+				log(40, "No to-watch episode found.");
+				return 23;
+			}
+		}
+		auto paths = c.store.getPaths(ep);
+		string path = null;
+		foreach (path_; paths) {
+			string expp = expandTilde(path_);
+			if (!seePath(expp)) {
+				logf(20, "Unable to see file at %s.", cescape(path_));
+				continue;
+			}
+			logf(20, "Found episode instance at %s; good.", cescape(path_));
+			path = expp;
+		}
+		if (path is null) {
+			log(40, "None of the registered paths worked. :(");
+			return 24;
+		}
+
+		this.store = c.store;
+
+		this.sa = new ServiceAggregate();
+		this.sa.setupDefaults();
+		auto ed = this.sa.ed;
+		this.bw_stdout = new BufferWriter(ed, 1);
+		this.bw_stderr = new BufferWriter(ed, 2);
+
+		auto mprun = new MPRun(this.getCommand(path), &bw_stdout.write, &this.passStderr, &this.processClose, &this.processClose);
+		mprun.setupPty(ed, 0);
+		mprun.start(ed);
+		mprun.linkErr(ed);
+
+		ed.Run();
+		int rc;
+		if (mprun.p.waitPid(&rc, WNOHANG) <= 0) {
+			log(20, "Terminating player instance.");
+			mprun.p.kill();
+		}
+		// Do final data flush here, so we do it in parallel to the player terminating.
+		this.flushData();
+		this.store.updateEpisodeWatched(ep, done_threshold);
+
+		if (mprun.p.waitPid(&rc, WNOHANG) <= 0) {
+			log(20, "Killing player instance.");
+			mprun.p.kill(9);
+			mprun.p.waitPid(&rc);
+		}
+		log(20, "All done.");
+		return 0;
+	}
+}
+
 bool seePath(const char[] path) {
 	try {
 		getLinkAttributes(path);
@@ -269,7 +420,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdPlay()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}

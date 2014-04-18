@@ -1,8 +1,11 @@
+import core.bitop: popcnt;
 import std.algorithm: cmp;
 import std.container;
 import std.conv: to;
 import std.datetime;
+import std.functional: binaryFun;
 import std.string;
+static import std.zlib;
 
 import eudorina.logging;
 import eudorina.text;
@@ -45,6 +48,10 @@ public:
 		this.wfrac_ts_min = unixTimeToStdTime(0);
 	}
 	vt_id id() { return this._id; }
+	private immutable static string SQL_UPDATE = "UPDATE OR ROLLBACK episodes SET ts_add=?,length=?,watch_state=?,wfrac=?,wfrac_ts_min=? WHERE (id==?);";
+	bool toWatch() {
+		return (this.watch_state == TWatchState.TODO);
+	}
 	void update(SqliteStmt s) {
 		s.reset();
 		s.bind(this.ts_add.toUnixTime(), this.length, this.watch_state, this.wfrac, this.wfrac_ts_min.toUnixTime(), this._id);
@@ -137,10 +144,75 @@ private:
 	}
 }
 
+class BitMask {
+	ubyte[] mask;
+	this(ubyte[] mask) {
+		this.mask = mask;
+	}
+	this() {
+	}
+	void opOpAssign(string op)(BitMask other) if (op == "|") {
+		if (other.mask.length > this.mask.length) this.mask.length = other.mask.length;
+		long idx;
+		for (idx = 0; idx < other.mask.length; idx++) this.mask[idx] |= other.mask[idx];
+	}
+	int opIndex(long idx) {
+		return (this.mask[idx/8] >> (idx % 8)) && 1;
+	}
+	long countSet() {
+		long rv = 0;
+		foreach (db; this.mask) rv += popcnt(db);
+		return rv;
+	}
+	int opIndexAssign(int v, long idx) {
+		int mval = 1 << (idx % 8);
+		if (idx) {
+			this.mask[idx/8] |= mval;
+		} else {
+			this.mask[idx/8] &= ~mval;
+		}
+		return v;
+	}
+	void setLength(size_t bits) {
+		this.mask.length = bits/8 + ((bits % 8) && 1);
+	}
+	char[] getCompressed() {		
+		return cast(char[])(std.zlib.compress(cast(void[])this.mask));
+	}
+}
+
+BitMask bitMaskFromCompressed(ubyte[] data) {
+	ubyte[] mask = [];
+	if (data.length > 0) mask = cast(ubyte[])(std.zlib.uncompress(cast(void[])data));
+	return new BitMask(mask);
+}
+
+class TWatchTrace {
+private:
+	vt_id _id;
+public:
+	BitMask m;
+	SysTime ts_start, ts_end;
+
+	this(vt_id id, SysTime ts_start) {
+		this._id = id;
+		this.ts_start = ts_start;
+		this.ts_end = ts_start;
+		this.m = new BitMask();
+	}
+
+	static immutable string SQL_UPDATE = "UPDATE OR ROLLBACK watch_traces SET mask=?,ts_end=? WHERE (id == ?);";
+	void update(SqliteStmt s) {
+		s.reset();
+		s.bind(this.m.getCompressed(), this.ts_end.toUnixTime(), this._id);
+		s.step();
+	}	
+}
+
 class TStorage {
 private:
 	SqliteConn db_conn;
-	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_getpathsbyep, s_reppath, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep, s_newep;
+	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_newep, s_updateep, s_getpathsbyep, s_reppath, s_newtrace, s_getnewtrace, s_gettraces, s_updatetrace, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
 public:
 	TShow[] shows;
 	TShowSet[] showsets;
@@ -157,9 +229,16 @@ public:
 
 		this.s_geteps = c.prepare(this.SQL_GETEPS ~ ";");
 		this.s_getepbyshowinfo = c.prepare(this.SQL_GETEPBYSHOWINFO ~ ";");
+		this.s_newep = c.prepare(this.SQL_NEWEP);
+		this.s_updateep = c.prepare(TEpisode.SQL_UPDATE);
 
 		this.s_getpathsbyep = c.prepare(this.SQL_GETPATHSBYEP);
 		this.s_reppath = c.prepare(this.SQL_REPPATH);
+
+		this.s_newtrace = c.prepare(this.SQL_NEWTRACE);
+		this.s_getnewtrace = c.prepare(this.SQL_GETNEWTRACE);
+		this.s_gettraces = c.prepare(this.SQL_GETTRACES);
+		this.s_updatetrace = c.prepare(TWatchTrace.SQL_UPDATE);
 
 		this.s_show_add = c.prepare("INSERT " ~ TShow.sql_write);
 		this.s_show_rep = c.prepare("REPLACE " ~ TShow.sql_write);
@@ -167,8 +246,6 @@ public:
 		this.s_showset_add = c.prepare("INSERT " ~ TShowSet.sql_write_base);
 		this.s_showset_rep = c.prepare("REPLACE " ~ TShowSet.sql_write_base);
 		this.s_showsetm_rep = c.prepare("REPLACE " ~ TShowSet.sql_write_members);
-
-		this.s_newep = c.prepare(this.SQL_NEWEP);
 	}
 
 	private void readShows() {
@@ -334,6 +411,38 @@ public:
 		show.eps[idx] = rv;
 		return rv;
 	}
+	private immutable static string SQL_GETTRACES = "SELECT mask FROM watch_traces WHERE ((ep_id == ?) AND (ts_start >= ?));";
+	void updateEpisodeWatched(TEpisode ep, double done_threshold) {
+		if (ep.length < 1) {
+			logf(30, "Episode %s (%d) has length %d < 1; not attempting to update.", ep, ep.id, ep.length);
+			return;
+		}
+
+		long ts_min = ep.wfrac_ts_min.toUnixTime();
+		auto s = this.s_gettraces;
+		s.reset();
+		s.bind(ep.id, ts_min);
+		BitMask mask, m2;
+		mask = new BitMask();
+		mask.setLength(ep.length);
+		char[] trace;
+		while (s.step()) {
+			s.getRow(&trace);
+			m2 = bitMaskFromCompressed(cast(ubyte[])trace);
+			mask |= m2;
+		}
+		long seconds_watched = mask.countSet();
+		if (seconds_watched > ep.length) {
+			logf(30, "Episode %s (%d) length / seconds_watched mismatch: %d > %d. Saturating.", ep, ep.id, seconds_watched, ep.length);
+			seconds_watched = ep.length;
+		}
+		ep.wfrac = to!double(seconds_watched)/to!double(ep.length);
+		if ((ep.watch_state == TWatchState.TODO) && (ep.wfrac >= done_threshold)) ep.watch_state = TWatchState.DONE;
+		ep.update(this.s_updateep);
+	}
+	void pushEp(TEpisode ep) {
+		ep.update(this.s_updateep);
+	}
 //---------------------------------------------------------------- pathname access
 	private immutable static string SQL_GETPATHS = "SELECT id,path FROM episode_paths";
 	private immutable static string SQL_GETPATHSBYEP = SQL_GETPATHS ~ " WHERE (id == ?) ORDER BY rowid DESC;";
@@ -341,10 +450,10 @@ public:
 		string[] rv;
 		auto s = this.s_getpathsbyep;
 		s.reset();
-		s.bind(ep._id);
+		s.bind(ep.id);
 		vt_id id;
 		string path;
-		for (; s.step();) {
+		while (s.step()) {
 			s.getRow(&id, &path);
 			rv ~= path;
 		}
@@ -356,6 +465,27 @@ public:
 		s.reset();
 		s.bind(ep._id, path);
 		s.step();
+	}
+//---------------------------------------------------------------- watch trace access
+	private immutable static string SQL_NEWTRACE = "INSERT INTO watch_traces(ep_id,ts_start,ts_end) VALUES (?,?,?);";
+	private immutable static string SQL_GETNEWTRACE = "SELECT id from watch_traces WHERE ((ep_id == ?) AND (ts_start == ?) AND (ts_end == ?)) ORDER BY id DESC LIMIT 1;";
+	TWatchTrace newTrace(TEpisode ep) {
+		auto now = Clock.currTime();
+		auto now_ut = now.toUnixTime();
+		auto s = this.s_newtrace;
+		vt_id trace_id;
+
+		s.reset(); s.bind(ep._id, now_ut, now_ut); s.step();
+		// There's a minor race condition here, but it should be close enough.
+		s = this.s_getnewtrace;
+		s.reset(); s.bind(ep._id, now_ut, now_ut); s.step();
+		s.getRow(&trace_id);
+
+		return new TWatchTrace(trace_id, now);
+	}
+	void pushTrace(TWatchTrace t) {
+		auto s = this.s_updatetrace;
+		t.update(s);
 	}
 //---------------------------------------------------------------- show set manipulation
 	void addShowSetMember(TShowSet set, TShow show) {

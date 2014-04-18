@@ -10,32 +10,39 @@ import std.string;
 
 alias void delegate(char[]) td_io_writer;
 alias void delegate() td_voidfunc;
-
-td_voidfunc makeCopier(size_t bufsize=1024)(FD fd, td_io_writer out_) {
-	void copy() {
-		char buf[bufsize];
-		auto v = read(fd.fd, buf.ptr, bufsize);
-		if (v <= 0) {
-			fd.close();
-			return;
-		}
-		out_(buf[0..v]);
-	}
-	return &copy;
-}
+alias void delegate(FD) td_close_handler;
 
 class MPRun {
 	string[] argv;
 	SubProcess p;
 	td_io_writer oo, oe;
+	td_close_handler co, ce;
 
 	FD fd_o, fd_e; // subprocess stdio pipe ends
 
-	this(string[] argv, td_io_writer oo, td_io_writer oe) {
+	this(string[] argv, td_io_writer oo, td_io_writer oe, td_close_handler co = null, td_close_handler ce = null) {
 		this.argv = argv;
 		this.oo = oo;
 		this.oe = oe;
 		this.p = new SubProcess();
+		this.co = co ? co : &this.eatClose;
+		this.ce = ce ? ce : &this.eatClose;
+	}
+
+	void eatClose(FD fd) { }
+
+	td_voidfunc makeCopier(size_t bufsize=1024)(FD fd, td_io_writer out_, td_close_handler close_) {
+		void copy() {
+			char buf[bufsize];
+			auto v = read(fd.fd, buf.ptr, bufsize);
+			if (v <= 0) {
+				close_(fd);
+				fd.close();
+				return;
+			}
+			out_(buf[0..v]);
+		}
+		return &copy;
 	}
 
 	void setupPty(EventDispatcher ed, t_fd fd_i_source) {
@@ -46,7 +53,7 @@ class MPRun {
 		this.p.fd_i = 0;
 
 		this.fd_o = ed.WrapFD(fd_pty_master);
-		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo));
+		this.fd_o.setCallbacks(makeCopier(this.fd_o, this.oo, this.co));
 		this.fd_o.AddIntent(IOI_READ);
 
 		// Copy window size
@@ -58,7 +65,7 @@ class MPRun {
 	void linkErr(EventDispatcher ed, t_fd fd=-1) {
 		if (fd == -1) fd = this.p.fd_e;
 		this.fd_e = ed.WrapFD(this.p.fd_e);
-		this.fd_e.setCallbacks(makeCopier(this.fd_e, this.oe));
+		this.fd_e.setCallbacks(makeCopier(this.fd_e, this.oe, this.ce));
 		this.fd_e.AddIntent(IOI_READ);
 	}
 
