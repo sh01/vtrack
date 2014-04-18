@@ -176,6 +176,7 @@ class CmdListEps: Cmd {
 					show = c.getShow(spec);
 				} catch (InvalidShowSpec e) {
 					writef("%s\n", e);
+					continue;
 				}
 				writef("== %s\n", c.formatShow(show));
 				c.printEpisodes(show);
