@@ -533,7 +533,7 @@ public:
 		return format("%d %s", show.id, cescape(show.title));
 	}
 	string formatEpisode(TEpisode ep) {
-		return format("%s %.2f %d   %s / %s", ep.watch_state, ep.wfrac, ep.length, formatTime(ep.ts_add), formatTime(ep.wfrac_ts_min));
+		return format("%s %.2f %d   %s / %s / %s", ep.watch_state, ep.wfrac, ep.length, formatTime(ep.ts_add), formatTime(ep.ts_sm), formatTime(ep.wfrac_ts_min));
 	}
 	void printEpisodes(TShow show) {
 		int idx = 0;
