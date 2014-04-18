@@ -1,10 +1,10 @@
 import std.conv: to;
 import std.datetime: Clock, SysTime, DateTime;
 import std.exception: assumeUnique;
-import std.file: getLinkAttributes;
+import std.file;
 import std.format: formattedRead;
 import std.getopt;
-import std.path: expandTilde, buildPath;
+import std.path: expandTilde, baseName, buildPath;
 import std.regex;
 import std.stdio: writef, stdin;
 import std.string;
@@ -245,6 +245,39 @@ class CmdDisplayTraces: Cmd {
 	}
 }
 
+class CmdSAddScan: Cmd {
+	this() {
+		this.min_args = 2;
+		this.commands = ["s_add_scan"];
+		this.usage = "s_add_scan <show_spec> <path...>";
+	}
+	override int run (CLI c, string[] args) {
+		auto show = c.getShow(args[0]);
+		FN fn;
+		long succ, ext, fail;
+		foreach (pn; args[1..$]) {
+			auto bp = expandTilde(pn);
+			// Don't combin non-shallow span modes with followSymlink=true here; it makes the call stat every file, and error out on dangling symlinks; that's understandable behavior, but also rather undesirable for git-annex dirs.
+			foreach (string fpn; dirEntries(bp, SpanMode.shallow)) {
+				fn = new FN(baseName(fpn));
+				if (!fn.okExt()) {
+					ext += 1;
+				} else if (!fn.okToAdd()) {
+					logf(30, "Not ok: %s", fn);
+					fail += 1;
+				} else {
+					auto ep = c.store.getEpisode(show, fn.idx, true);
+					logf(20, "Adding: %d -> %s", fn.idx, fn.fn);
+					c.store.addPath(ep, fpn);
+					succ += 1;
+				}
+			}
+		}
+		writef("Ext filtered: %d, Ok: %d Parse failures: %d\n", ext, succ, fail);
+		return 0;
+	}
+}
+
 int parseMpTime(const(char)[] tspec) {
 	int h,m,rv;
 	formattedRead(tspec, "%d:%d:%d", &h, &m, &rv);
@@ -467,7 +500,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse(), new CmdSAddScan()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
