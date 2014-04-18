@@ -255,7 +255,7 @@ public:
 
 		this.s_newtrace = c.prepare(this.SQL_NEWTRACE);
 		this.s_getnewtrace = c.prepare(this.SQL_GETNEWTRACE);
-		this.s_gettraces = c.prepare(this.SQL_GETTRACEMASKS);
+		this.s_gettracemasks = c.prepare(this.SQL_GETTRACEMASKS);
 		this.s_gettraces = c.prepare(this.SQL_GETTRACES);
 		this.s_updatetrace = c.prepare(TWatchTrace.SQL_UPDATE);
 
