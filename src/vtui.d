@@ -238,10 +238,10 @@ class CmdDisplayTraces: Cmd {
 		writef("== %d\n", ep.id);
 		BitMask m = new BitMask;
 		foreach (trace; c.store.getTraces(ep)) {
-			writef("  %3d:   %s %s %s\n", trace.id, c.formatTime(trace.ts_start), c.formatTime(trace.ts_end), cescape(cast(char[])trace.m.mask));
+			writef("  %3d:   %s %s  %d: %s\n", trace.id, c.formatTime(trace.ts_start), c.formatTime(trace.ts_end), trace.m.countSet(), cescape(cast(char[])trace.m.mask));
 			m |= trace.m;
 		}
-		writef("Cumulative mask: %s\n", cescape(cast(char[])m.mask));
+		writef("Cumulative mask: %s (%d)\n", cescape(cast(char[])m.mask), m.countSet());
 		return 0;
 	}
 }
