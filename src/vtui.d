@@ -443,6 +443,13 @@ class CmdPlay: Cmd {
 			mprun.p.kill();
 		}
 		// Do final data flush here, so we do it in parallel to the player terminating.
+		if (this.ts_prev == this.ep.length-2) {
+			// Last confirmed line is from END-1. There's a high chance either the media player was off by this much,
+			// or the last fractional second wasn't long enough to reach our threshold.
+			// We'll count the last one as watched also, in this case; this is very ugly, but should give us better results in practice.
+			this.trace.m[this.ts_prev+1] = 1;
+		}
+
 		this.flushData();
 		this.store.updateEpisodeWatched(ep, done_threshold);
 
