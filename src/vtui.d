@@ -21,25 +21,27 @@ import vtrack.mpwrap;
 
 alias int delegate(string[]) td_cli_cmd;
 
-class InvalidShowSpec: Exception {
+class InvalidSpec: Exception {
 	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		auto msg = format("Unknown show %s.", cescape(spec));
+		auto msg = format("Invalid item %s.", spec);
 		super(msg, file, line, next);
 	};
 }
 
-class InvalidIntSpec: Exception {
-	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		auto msg = format("Invalid integer %s.", cescape(spec));
-		super(msg, file, line, next);
-	};
+class InvalidShowSetSpec: InvalidSpec {
+	this(A...)(A a) { super (a); }
 }
 
-class InvalidEpSpec: Exception {
-	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		auto msg = format("Unknown episode %s.", spec);
-		super(msg, file, line, next);
-	};
+class InvalidShowSpec: InvalidSpec {
+	this(A...)(A a) { super (a); }
+}
+
+class InvalidIntSpec: InvalidSpec {
+	this(A...)(A a) { super (a); }
+}
+
+class InvalidEpSpec: InvalidSpec {
+	this(A...)(A a) { super (a); }
 }
 
 // ---------------------------------------------------------------- Command specs
@@ -65,9 +67,15 @@ class CmdListSets: Cmd {
 	}
 
 	override int run(CLI c, string[] args) {
-		long id = 0;
-		foreach (s; c.store.showsets) {
-			writef("%d: %s\n", id++, s.desc);
+		if (args.length <= 0) {
+			c.store.readAllShowSets();
+			foreach (ss; c.store.showsets) {
+				writef("%d: %s\n", ss.id, ss.desc);
+			}
+		} else {
+			TShowSet ss = c.getShowSet(args[0]);
+			writef("==== %d: %s\n", ss.id, ss.desc);
+			foreach (show; ss.shows) writef("  %s\n", c.formatShow(show));
 		}
 		return 0;
 	}
@@ -86,6 +94,27 @@ class CmdMakeShowSet: Cmd {
 		c.store.addShowSet(s);
 		writef("Added: %d: %s\n", s.id, cescape(s.desc));
 		return 0;
+	}
+}
+
+class CmdModShowSet: Cmd {
+	this() {
+		this.min_args = 2;
+		this.commands = ["modss"];
+		this.usage = "modss <show set> (add <show spec...>)";
+	}
+	override int run(CLI c, string[] args) {
+		TShowSet ss = c.getShowSet(args[0]);
+		string cmd = args[1];
+		if (cmd == "add") {
+			TShow show = c.getShow(args[2]);
+			c.store.addShowSetMember(ss, show);
+			writef("Added: %d <- %d.\n", ss.id, show.id);
+			return 0;
+		}
+
+		writef("Unknown subcommand %s.", cescape(cmd));
+		return 200;
 	}
 }
 
@@ -501,7 +530,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse(), new CmdSAddScan()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse(), new CmdSAddScan(), new CmdModShowSet()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
@@ -531,7 +560,20 @@ public:
 		return format("%04d-%02d-%02d_%02d:%02d:%02d", dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
 	}
 	string formatShow(TShow show) {
-		return format("%d %s", show.id, cescape(show.title));
+		long[TWatchState] ecs;
+
+		TWatchState s0, s1, s2;
+		s0 = TWatchState.TODO;
+		s1 = TWatchState.DONE;
+		s2 = TWatchState.SKIPPED;
+		ecs[s0] = 0;
+		ecs[s1] = 0;
+		ecs[s2] = 0;
+		foreach (ep; show.eps) {
+			if (ep is null) continue;
+			ecs[ep.watch_state] += 1;
+		}
+		return format("%3d %40s: %d / %d / %d", show.id, show.title, ecs[s0], ecs[s1], ecs[s2]);
 	}
 	string formatEpisode(TEpisode ep) {
 		return format("%s %.2f %d   %s / %s / %s", ep.watch_state, ep.wfrac, ep.length, formatTime(ep.ts_add), formatTime(ep.ts_sm), formatTime(ep.wfrac_ts_min));
@@ -560,6 +602,11 @@ public:
 		if ((rv = this.store.getShowByAlias(spec)) !is null) return rv;
 		// No idea, then. :(
 		throw new InvalidShowSpec(spec);
+	}
+	TShowSet getShowSet(string spec) {
+		vt_id id;
+		if (parseInt(spec, &id) && (id >= 0)) return this.store.getShowSet(id);
+		throw new InvalidShowSetSpec(spec);
 	}
 
 	// ---------------------------------------------------------------- Command processing
@@ -590,6 +637,9 @@ public:
 		} catch (InvalidEpSpec e) {
 			writef("Error: %s\n", e.msg);
 			return 6;
+		} catch (InvalidSpec e) {
+			writef("Error: %s\n", e.msg);
+			return 7;
 		}
 		return rv;
 	}

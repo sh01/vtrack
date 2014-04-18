@@ -112,6 +112,7 @@ public:
 	this(string desc, vt_id id=-1) {
 		this._id = id;
 		this.desc = desc;
+		this.shows = new RedBlackTree!TShow();
 	}
 	vt_id id() { return this._id; }
 
@@ -230,7 +231,7 @@ public:
 class TStorage {
 private:
 	SqliteConn db_conn;
-	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_geteps, s_getepbyshowinfo, s_newep, s_updateep, s_getpathsbyep, s_reppath, s_newtrace, s_getnewtrace, s_gettracemasks, s_gettraces, s_updatetrace, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
+	SqliteStmt s_getshows, s_getshowbyalias, s_getshowbyid, s_getshowsets, s_getshowsetms, s_getshowsetbyid, s_getshowsetmsbyss, s_geteps, s_getepbyshowinfo, s_newep, s_updateep, s_getpathsbyep, s_reppath, s_newtrace, s_getnewtrace, s_gettracemasks, s_gettraces, s_updatetrace, s_show_add, s_showalias_rep, s_show_rep, s_showset_add, s_showset_rep, s_showsetm_rep;
 public:
 	TShow[] shows;
 	TShowSet[] showsets;
@@ -242,8 +243,10 @@ public:
 		this.s_getshowbyalias = c.prepare(this.SQL_GETSHOWBYALIAS ~ ";");
 		this.s_getshowbyid = c.prepare(this.SQL_GETSHOWBYID ~ ";");
 
-		this.s_getshowsets = c.prepare("SELECT id,desc FROM show_sets;");
+		this.s_getshowsets = c.prepare(this.SQL_GETSHOWSETS);
 		this.s_getshowsetms = c.prepare("SELECT id,show_id FROM show_set_in;");
+		this.s_getshowsetbyid = c.prepare(this.SQL_GETSHOWSETBYID);
+		this.s_getshowsetmsbyss = c.prepare(this.SQL_GETSHOWSETMSBYSS);
 
 		this.s_geteps = c.prepare(this.SQL_GETEPS ~ ";");
 		this.s_getepbyshowinfo = c.prepare(this.SQL_GETEPBYSHOWINFO ~ ";");
@@ -295,6 +298,7 @@ public:
 		}
 
 		this.readShows();
+		/*
 		for (s = this.s_getshowsets, s.reset(); s.step();) {
 			string desc;
 			s.getRow(&id, &desc);
@@ -307,7 +311,7 @@ public:
 				throw new StorageError(format("Invalid (%d,%d) pair in show_set_in: unknown showset.", id, show_id));
 			}
 			set.shows.stableInsert(getShow(id));
-		}
+		}*/
 		for (s = this.s_geteps, s.reset(); s.step();) {
 			vt_id idx, ep_id;
 			s.getRow(&ep_id, &show_id, &idx);
@@ -325,15 +329,6 @@ public:
 		show._id = id;
 		this.shows ~= show;
 		show.write(this.s_show_add);
-	}
-	void addShowSet(TShowSet set) {
-		vt_id id = this.showsets.length;
-		if (set._id >= 0) {
-			throw new StorageError(format("Attempted to add show with id %d.", set._id));
-		}
-		set._id = id;
-		this.showsets ~= set;
-		set.write_base(this.s_showset_add);
 	}
 //---------------------------------------------------------------- Show getters
 	private immutable static string SQL_GETSHOWS = "SELECT shows.id,shows.ts_add,shows.title FROM shows";
@@ -517,6 +512,64 @@ public:
 		return rv;
 	}
 //---------------------------------------------------------------- show set manipulation
+	void addShowSet(TShowSet set) {
+		vt_id id = this.showsets.length;
+		if (set._id >= 0) {
+			throw new StorageError(format("Attempted to add show with id %d.", set._id));
+		}
+		set._id = id;
+		this.showsets ~= set;
+		set.write_base(this.s_showset_add);
+	}
+	private immutable static string SQL_GETSHOWSETBASE = "SELECT id,desc FROM show_sets";
+	private immutable static string SQL_GETSHOWSETS = SQL_GETSHOWSETBASE ~ ";";
+	private immutable static string SQL_GETSHOWSETBYID = SQL_GETSHOWSETBASE ~ " WHERE (id == ?);";
+	private immutable static string SQL_GETSHOWSETMSBYSS = "SELECT show_id FROM show_set_in WHERE (id == ?);";
+	void readAllShowSets() {
+		auto s = this.s_getshowsets;
+		s.reset();
+		this.readShowSets(s);
+	}
+
+	long readShowSets(SqliteStmt s) {
+		long rv = 0;
+		vt_id id, show_id;
+		string desc;
+		TShowSet ss;
+
+		auto s2 = this.s_getshowsetmsbyss;
+		for (; s.step(); rv += 1) {
+			s.getRow(&id, &desc);
+			ss = new TShowSet(desc, id);
+			if (this.showsets.length <= id) this.showsets.length = id+1;
+			this.showsets[id] = ss;
+
+			s2.reset();
+			s2.bind(id);
+			while (s2.step()) {
+				s2.getRow(&show_id);
+				ss.shows.stableInsert(getShowById(show_id));
+			}
+		}
+		return rv;
+	}
+
+	TShowSet getShowSet(vt_id id) {
+		TShowSet rv;
+		if (this.showsets.length <= id)
+			this.showsets.length = id+1;
+		else
+			rv = this.showsets[id];
+
+		if (rv !is null) return rv;
+
+		auto s = this.s_getshowsetbyid;
+		s.reset();
+		s.bind(id);
+		if (!this.readShowSets(s)) throw new StorageError(format("No show set with id %d.", id));
+
+		return this.showsets[id];
+	}
 	void addShowSetMember(TShowSet set, TShow show) {
 		this._verifyShow(show);
 		if (this.showsets[set._id] !is set) throw new StorageError(format("Attempted to manipulate unregistered show set."));
