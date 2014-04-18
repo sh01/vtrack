@@ -175,7 +175,7 @@ class BitMask {
 	}
 	int opIndexAssign(int v, long idx) {
 		int mval = 1 << (idx % 8);
-		if (idx) {
+		if (v) {
 			this.mask[idx/8] |= mval;
 		} else {
 			this.mask[idx/8] &= ~mval;
