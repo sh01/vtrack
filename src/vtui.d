@@ -6,7 +6,7 @@ import std.format: formattedRead;
 import std.getopt;
 import std.path: expandTilde, buildPath;
 import std.regex;
-import std.stdio: writef;
+import std.stdio: writef, stdin;
 import std.string;
 
 import eudorina.io: FD, BufferWriter, WNOHANG;
@@ -16,6 +16,7 @@ import eudorina.logging;
 import eudorina.db.sqlit3;
 
 import vtrack.base;
+import vtrack.h_fnparse;
 import vtrack.mpwrap;
 
 alias int delegate(string[]) td_cli_cmd;
@@ -392,6 +393,32 @@ class CmdPlay: Cmd {
 	}
 }
 
+class CmdDbgFnParse: Cmd {
+	this() {
+		this.min_args = 0;
+		this.commands = ["dbg_fn"];
+		this.usage = "dbg_fn";
+	}
+	override int run (CLI c, string[] args) {
+		FN fn;
+		long succ, ext, fail;
+		foreach (fn_; stdin.byLine()) {
+			fn = new FN(fn_.idup);
+			logf(20, "%s", fn);
+			if (!fn.okExt()) {
+				ext += 1;
+			} else if (!fn.okToAdd()) {
+				logf(30, "Not ok: %s", fn);
+				fail += 1;
+			} else {
+				succ += 1;
+			}
+		}
+		writef("Ext filtered: %d, Successes: %d Failures: %d\n", ext, succ, fail);
+		return 0;
+	}
+}
+
 bool seePath(const char[] path) {
 	try {
 		getLinkAttributes(path);
@@ -440,7 +467,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay()];
+		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
