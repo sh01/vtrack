@@ -1,3 +1,4 @@
+import std.array: split;
 import std.conv: to;
 import std.datetime: Clock, SysTime, DateTime;
 import std.exception: assumeUnique;
@@ -23,7 +24,7 @@ alias int delegate(string[]) td_cli_cmd;
 
 class InvalidSpec: Exception {
 	this(string spec, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		auto msg = format("Invalid item %s.", spec);
+		auto msg = format("Invalid item %s.", cescape(spec));
 		super(msg, file, line, next);
 	};
 }
@@ -44,6 +45,195 @@ class InvalidEpSpec: InvalidSpec {
 	this(A...)(A a) { super (a); }
 }
 
+// ---------------------------------------------------------------- Command helpers
+bool parseInt(string spec, long *o) {
+	if (spec == "") return false;
+	uint vc;
+	foreach (fmt; ["0x%x", "%d"]) {
+		long i = -1;
+		auto fin = spec;
+		try {
+			vc = formattedRead(fin, fmt, &i);
+		} catch {
+		}
+		if ((fin == "") && (vc == 1)) {
+			*o = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+long parseIntExc(string spec) {
+	long rv;
+	if (!parseInt(spec, &rv)) throw new InvalidIntSpec(spec);
+	return rv;
+}
+
+class Path {
+	string[] p;
+	this(string[] p) {
+		this.p = p;
+	}
+	this(string spec) {
+		this.p = split(spec,"/");
+	}
+	string opIndex(int i) { return p[i]; }
+	Path drop(size_t count = 1) {
+		if (count > p.length) count = p.length;
+		p = p[count..$];
+		return this;
+	}
+	Path dup() {
+		return new Path(this.p);
+	}
+	Path dropEmpties() {
+		while (p.length > 0 && p[0] == "") p = p[1..$];
+		return this;
+	}
+	bool isEmpty() { return p.length < 1; }
+	bool isEverything() {
+		// Return if the current top level is an all-match.
+		if (isEmpty()) return false;
+		for (size_t i = 0; i < p.length; i++) {
+			if (p[i] == "*") return true;
+			if (p[i] != "") return false;
+		}
+		// We interpret trailing slash(es) the same as /*.
+		return true;
+	}
+}
+
+class ItemBase {
+	string formatHR(CLI c) { throw new Exception("Not implemented."); }
+	int level;
+	CLI c;
+	this(CLI c, int level = 0) {
+		this.c = c;
+		this.level = level;
+	}
+	void printHR(CLI c) {
+		int indent = this.level*2;
+		string prefix = "";
+		if (this.level == 0) prefix = "==== ";
+		writef("%*s%s\n", indent, prefix, this.formatHR(c));
+	}
+	ItemBase[] getChildren(Path spec) {
+		return this.getChildren_(spec.dup);
+	}
+	ItemBase[] getChildren_(Path spec) {
+		if (spec.dropEmpties().isEmpty()) return [this];
+		throw new Exception("Not implemented.");
+	}
+}
+
+class ItemEpPath: ItemBase {
+	string I;
+	this(CLI c, string path, int level=0) {
+		this.I = path;
+		super(c, level);
+	}
+	override string formatHR(CLI c) {
+		return cescape(this.I);
+	}
+}
+
+class ItemEpisode: ItemBase {
+	TEpisode I;
+	this(CLI c, TEpisode ep, int level = 0) {
+		this.c = c;
+		this.I = ep;
+		super(c, level);
+	}
+	override ItemBase[] getChildren_(Path spec) {
+		if (spec.isEmpty()) return [this];
+		ItemBase[] rv;
+		if (spec.isEverything()) {
+			spec.drop();
+			rv ~= this;
+			foreach (p; this.c.store.getPaths(this.I)) rv ~= new ItemEpPath(c, p, level+1).getChildren(spec);
+			return rv;
+		}
+		throw new InvalidSpec("Explicit path indexing not supported.");
+	}
+	override string formatHR(CLI c) {
+		return format("  %s %.2f %d   %s / %s / %s", I.watch_state, I.wfrac, I.length, c.formatTime(I.ts_add), c.formatTime(I.ts_sm), c.formatTime(I.wfrac_ts_min));
+	}
+}
+
+class ItemShow: ItemBase {
+	TShow I;
+	this(CLI c, TShow s, int level = 0) {
+		super(c, level);
+		this.I = s;
+	}
+	override string formatHR(CLI c) {
+		long[TWatchState] ecs;
+
+		TWatchState s0, s1, s2;
+		s0 = TWatchState.TODO;
+		s1 = TWatchState.DONE;
+		s2 = TWatchState.SKIPPED;
+		ecs[s0] = 0;
+		ecs[s1] = 0;
+		ecs[s2] = 0;
+		foreach (ep; I.eps) {
+			if (ep is null) continue;
+			ecs[ep.watch_state] += 1;
+		}
+		return format("%3d %40s: %d / %d / %d", I.id, I.title, ecs[s0], ecs[s1], ecs[s2]);
+	}
+	override ItemBase[] getChildren_(Path spec) {
+		ItemBase[] rv;
+		if (spec.isEmpty()) return [this];
+		if (spec.isEverything()) {
+			spec.drop();
+			rv ~= this;
+			foreach (ep; this.I.eps) {
+				if (ep is null) continue;
+				rv ~= new ItemEpisode(c, ep, level+1).getChildren(spec);
+			}
+		} else {
+			auto idx = parseIntExc(spec[0]);
+			rv ~= new ItemEpisode(c, this.I.eps[idx]).getChildren(spec.drop());
+		}
+		return rv;
+	}
+}
+
+class ItemShowSet: ItemBase {
+	TShowSet I;
+	this(CLI c, TShowSet ss, int level = 0) {
+		this.I = ss;
+		super(c, level);
+	}
+	override string formatHR(CLI c) {
+		return format("%3d: %s", this.I.id, this.I.desc);
+	}
+	override ItemBase[] getChildren_(Path spec) {
+		ItemBase[] rv;
+		if (spec.isEmpty()) return [this];
+		if (spec.isEverything()) {
+			spec.drop();
+			rv ~= this;
+			foreach (show; this.I.shows) rv ~= new ItemShow(c, show, level+1).getChildren(spec);
+		} else {
+			auto idx = parseIntExc(spec[0]);
+			TShow s;
+			long i = 0;
+			foreach (show; this.I.shows) {
+				if (i++ == idx) {
+					s = show;
+					break;
+				}
+			}
+			if (s is null) throw new InvalidSpec(spec[0]);
+			rv ~= new ItemShow(c, s).getChildren(spec.drop());
+		}
+		return rv;
+	}
+}
+
 // ---------------------------------------------------------------- Command specs
 class Cmd {
 	int min_args = -1;
@@ -59,23 +249,18 @@ class Cmd {
 	}
 }
 
-class CmdListSets: Cmd {
+class CmdLS: Cmd {
 	this() {
-		this.min_args = 0;
-		this.commands = ["ls", "lsss"];
-		this.usage = "ls";
+		this.min_args = 1;
+		this.commands = ["ls"];
+		this.usage = "ls ...";
 	}
-
 	override int run(CLI c, string[] args) {
-		if (args.length <= 0) {
-			c.store.readAllShowSets();
-			foreach (ss; c.store.showsets) {
-				writef("%d: %s\n", ss.id, ss.desc);
+		foreach (spec; args) {
+			ItemBase[] items = c.getItems(spec);
+			foreach (it; items) {
+				it.printHR(c);
 			}
-		} else {
-			TShowSet ss = c.getShowSet(args[0]);
-			writef("==== %d: %s\n", ss.id, ss.desc);
-			foreach (show; ss.shows) writef("  %s\n", c.formatShow(show));
 		}
 		return 0;
 	}
@@ -153,24 +338,6 @@ class CmdAddAlias: Cmd {
 	}
 }
 
-class CmdDisplayShow: Cmd {
-	this() {
-		this.min_args = 1;
-		this.commands = ["ds"];
-		this.usage = "ds <show_spec>";
-	}
-	override int run(CLI c, string[] args) {
-		string spec = args[0];
-		TShow show = c.getShow(spec);
-		if (show is null) {
-			writef("No show matching %s.\n", cescape(spec));
-			return 20;
-		}
-		writef("Got show: %s\n", c.formatShow(show));
-		return 0;
-	}
-}
-
 class CmdMakeEp: Cmd {
 	this() {
 		this.min_args = 2;
@@ -191,35 +358,6 @@ class CmdMakeEp: Cmd {
 	}
 }
 
-class CmdListEps: Cmd {
-	this() {
-		this.min_args = 0;
-		this.commands = ["lseps"];
-		this.usage = "lseps [show...]";
-	}
-	override int run(CLI c, string[] args) {
-		if (args.length > 0) {
-			TShow show;
-			foreach (spec; args) {
-				try {
-					show = c.getShow(spec);
-				} catch (InvalidShowSpec e) {
-					writef("%s\n", e);
-					continue;
-				}
-				writef("== %s\n", c.formatShow(show));
-				c.printEpisodes(show);
-			}
-		} else {
-			foreach (show; c.store.shows) {
-				writef("== %s\n", c.formatShow(show));
-				c.printEpisodes(show);
-			}
-		}
-		return 0;
-	}
-}
-
 class CmdAddEpPath: Cmd {
 	this() {
 		this.min_args = 3;
@@ -235,23 +373,6 @@ class CmdAddEpPath: Cmd {
 		}
 		c.store.addPath(ep, args[2]);
 		writef("Added path: %d -> %s\n", ep.id, cescape(args[2]));
-		return 0;
-	}
-}
-
-class CmdDisplayEpPaths: Cmd {
-	this() {
-		this.min_args = 2;
-		this.commands = ["lspaths"];
-		this.usage = "lspaths <show_spec> <ep index>";
-	}
-	override int run (CLI c, string[] args) {
-		auto ep = c.getEpisodeExc(args[0], args[1]);
-		auto paths = c.store.getPaths(ep);
-		writef("== %d\n", ep.id);
-		foreach (path; paths) {
-			writef("  %s\n", cescape(path));
-		}
 		return 0;
 	}
 }
@@ -519,30 +640,6 @@ bool seePath(const char[] path) {
 	return true;
 }
 
-bool parseInt(string spec, long *o) {
-	if (spec == "") return false;
-	uint vc;
-	foreach (fmt; ["0x%x", "%d"]) {
-		long i = -1;
-		auto fin = spec;
-		try {
-			vc = formattedRead(fin, fmt, &i);
-		} catch {
-		}
-		if ((fin == "") && (vc == 1)) {
-			*o = i;
-			return true;
-		}
-	}
-	return false;
-}
-
-long parseIntExc(string spec) {
-	long rv;
-	if (!parseInt(spec, &rv)) throw new InvalidIntSpec(spec);
-	return rv;
-}
-
 immutable DateTime unixBOT = DateTime(1970, 01, 01, 01, 00, 00);
 
 class CLI {
@@ -558,7 +655,7 @@ public:
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
 
-		Cmd[] cmds = [new Cmd(), new CmdListSets(), new CmdListEps(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayEpPaths(), new CmdDisplayShow(), new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse(), new CmdSAddScan(), new CmdModShowSet()];
+		Cmd[] cmds = [new Cmd(), new CmdMakeShowSet(), new CmdMakeShow(), new CmdMakeEp(), new CmdAddAlias(), new CmdAddEpPath, new CmdDisplayTraces, new CmdPlay(), new CmdDbgFnParse(), new CmdSAddScan(), new CmdModShowSet(), new CmdLS()];
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
@@ -587,36 +684,6 @@ public:
 		if (dt == unixBOT) return "?";
 		return format("%04d-%02d-%02d_%02d:%02d:%02d", dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
 	}
-	string formatShow(TShow show) {
-		long[TWatchState] ecs;
-
-		TWatchState s0, s1, s2;
-		s0 = TWatchState.TODO;
-		s1 = TWatchState.DONE;
-		s2 = TWatchState.SKIPPED;
-		ecs[s0] = 0;
-		ecs[s1] = 0;
-		ecs[s2] = 0;
-		foreach (ep; show.eps) {
-			if (ep is null) continue;
-			ecs[ep.watch_state] += 1;
-		}
-		return format("%3d %40s: %d / %d / %d", show.id, show.title, ecs[s0], ecs[s1], ecs[s2]);
-	}
-	string formatEpisode(TEpisode ep) {
-		return format("%s %.2f %d   %s / %s / %s", ep.watch_state, ep.wfrac, ep.length, formatTime(ep.ts_add), formatTime(ep.ts_sm), formatTime(ep.wfrac_ts_min));
-	}
-	void printEpisodes(TShow show) {
-		int idx = 0;
-		foreach (ep; show.eps) {
-			if (!ep) {
-				if (idx != 0) writef("%d: ?\n", idx);
-				continue;
-			}
-			writef("  %d: %s\n", idx, this.formatEpisode(ep));
-			idx++;
-		}
-	}
 
 	TShow getShow(string spec) {
 		TShow rv = null;
@@ -636,7 +703,60 @@ public:
 		if (parseInt(spec, &id) && (id >= 0)) return this.store.getShowSet(id);
 		throw new InvalidShowSetSpec(spec);
 	}
+	ItemBase[] getItems(string spec) {
+		auto p = new Path(spec);
+		if (p.isEmpty()) throw new InvalidSpec(spec);
 
+		ItemBase[] rv;
+		// Shows
+		if (p[0] == "s") {
+			p.drop();
+			if (p.isEverything() || p.isEmpty()) {
+				// TODO: Insert a readShows() call here once we get lazy.
+				foreach (show; this.store.shows) {
+					if (show is null) continue;
+					rv ~= new ItemShow(this, show).getChildren(p.dup.drop());
+				}
+			} else {
+				p.dropEmpties();
+				TShow show = this.getShow(p[0]);
+				p.drop();
+				rv ~= new ItemShow(this, show).getChildren(p);
+			}
+			return rv;
+		}
+		// Showsets
+		if (p[0] == "S") {
+			p.drop();
+			if (p.isEverything() || p.isEmpty()) {
+				this.store.readAllShowSets();
+				p.drop();
+				foreach (ss; this.store.showsets) {
+					if (ss is null) continue;
+					rv ~= new ItemShowSet(this, ss).getChildren(p);
+				}
+			} else {
+				TShowSet ss = this.getShowSet(p[0]);
+				p.drop();
+				rv ~= new ItemShowSet(this, ss).getChildren(p);
+			}
+			return rv;
+		}
+		// No luck with the static prefixes. Try for heuristic show matching, then.
+		TShow show;
+		try {
+			show = this.getShow(p[0]);
+		} catch (InvalidShowSpec e) {};
+		if (show !is null) {
+			p.drop();
+			// Convenience: Display eps by default if no sub-elements were specified.
+			if (p.isEmpty()) p = new Path("*");
+			rv ~= new ItemShow(this, show).getChildren(p);
+			return rv;
+		}
+		logf(30, "Found nothing matching generic item spec %s :(", cescape(spec));
+		return null;
+	}
 	// ---------------------------------------------------------------- Command processing
 	int runCmd(string[] args) {
 		if (args.length < 2) {
