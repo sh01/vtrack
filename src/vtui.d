@@ -573,7 +573,8 @@ class CmdPlay: Cmd {
 
 		ed.Run();
 		int rc;
-		if (mprun.p.waitPid(&rc, WNOHANG) <= 0) {
+		bool mp_gone = mprun.p.waitPid(&rc, WNOHANG) > 0;
+		if (!mp_gone) {
 			log(20, "Terminating player instance.");
 			mprun.p.kill();
 		}
@@ -595,7 +596,8 @@ class CmdPlay: Cmd {
 		this.flushData();
 		this.store.updateEpisodeWatched(ep, done_threshold);
 
-		if (mprun.p.waitPid(&rc, WNOHANG) <= 0) {
+		if (!mp_gone) mp_gone = mprun.p.waitPid(&rc, WNOHANG) > 0;
+		if (!mp_gone) {
 			log(20, "Killing player instance.");
 			mprun.p.kill(9);
 			mprun.p.waitPid(&rc);
