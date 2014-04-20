@@ -13,6 +13,7 @@ import std.string;
 import eudorina.io: FD, BufferWriter, WNOHANG;
 import eudorina.service_aggregation: ServiceAggregate;
 import eudorina.text;
+import eudorina.structured_text;
 import eudorina.logging;
 import eudorina.db.sqlit3;
 
@@ -105,18 +106,24 @@ class Path {
 }
 
 class ItemBase {
-	string formatHR(CLI c) { throw new Exception("Not implemented."); }
 	int level;
 	CLI c;
 	this(CLI c, int level = 0) {
 		this.c = c;
 		this.level = level;
 	}
-	void printHR(CLI c) {
+	string formatHR() { throw new Exception("Not implemented."); }
+	void formatLine(ANSILine l) {
+		l.add(128).add(this.formatHR());
+	}
+	void formatSubTable(ANSITable t) {
 		int indent = this.level*2;
 		string prefix = "";
 		if (this.level == 0) prefix = "==== ";
-		writef("%*s%s\n", indent, prefix, this.formatHR(c));
+		prefix = format("%*s", indent, prefix);
+		auto l = t.add();
+		if (prefix.length > 0) l.add().add(prefix);
+		this.formatLine(l);
 	}
 	ItemBase[] getChildren(Path spec) {
 		return this.getChildren_(spec.dup);
@@ -124,6 +131,20 @@ class ItemBase {
 	ItemBase[] getChildren_(Path spec) {
 		if (spec.dropEmpties().isEmpty()) return [this];
 		throw new Exception("Not implemented.");
+	}
+	int level_delta() {
+		return 0;
+	}
+}
+
+class ItemLevelChange: ItemBase {
+	int _level_delta;
+	this(CLI c, int level, int level_delta) {
+		super(c, level);
+		this._level_delta = level_delta;
+	}
+	override int level_delta() {
+		return this._level_delta;
 	}
 }
 
@@ -133,7 +154,7 @@ class ItemEpPath: ItemBase {
 		this.I = path;
 		super(c, level);
 	}
-	override string formatHR(CLI c) {
+	override string formatHR() {
 		return cescape(this.I);
 	}
 }
@@ -151,13 +172,37 @@ class ItemEpisode: ItemBase {
 		if (spec.isEverything()) {
 			spec.drop();
 			rv ~= this;
+			rv ~= new ItemLevelChange(c, level, 1);
 			foreach (p; this.c.store.getPaths(this.I)) rv ~= new ItemEpPath(c, p, level+1).getChildren(spec);
+			rv ~= new ItemLevelChange(c, level, -1);
 			return rv;
 		}
 		throw new InvalidSpec("Explicit path indexing not supported.");
 	}
-	override string formatHR(CLI c) {
-		return format("  %s %.2f %d   %s / %s / %s", I.watch_state, I.wfrac, I.length, c.formatTime(I.ts_add), c.formatTime(I.ts_sm), c.formatTime(I.wfrac_ts_min));
+	override void formatLine(ANSILine l) {
+		const(Color) *bc;
+		switch (I.watch_state) {
+		case TWatchState.TODO:
+			bc = &CYellow;
+			break;
+		case TWatchState.DONE:
+			bc = &CGreen;
+			break;
+		case TWatchState.SKIPPED:
+			bc = &CBlue;
+			break;
+		default:
+			bc = &CMagenta;
+			break;
+		}
+		l.add().setFmt(*bc,null,true).addf("  %s", I.watch_state);
+		l.add().addf("%.2f", I.wfrac);
+		l.add().addf("%d", I.length);
+		l.add().setFmt(CBlack,null,true).add(c.formatTime(I.ts_add)).resetFmt();
+		l.add().add("/");
+		l.add().setFmt(CBlack,null,true).add(c.formatTime(I.ts_sm)).resetFmt();
+		l.add().add("/");
+		l.add().setFmt(CBlack,null,true).add(c.formatTime(I.wfrac_ts_min)).resetFmt();
 	}
 }
 
@@ -167,7 +212,7 @@ class ItemShow: ItemBase {
 		super(c, level);
 		this.I = s;
 	}
-	override string formatHR(CLI c) {
+	override void formatLine(ANSILine l) {
 		long[TWatchState] ecs;
 
 		TWatchState s0, s1, s2;
@@ -181,7 +226,15 @@ class ItemShow: ItemBase {
 			if (ep is null) continue;
 			ecs[ep.watch_state] += 1;
 		}
-		return format("%3d %40s: %d / %d / %d", I.id, I.title, ecs[s0], ecs[s1], ecs[s2]);
+		bool have_todo = ecs[s0] > 0;
+		const(Color) *bc = have_todo ? &CYellow : &CWhite;
+		l.add().setFmt(*bc, null, have_todo).addf("%3d", I.id);
+		l.add().addf("%10s", I.title);
+		l.add().setFmt(CYellow, null, true).addf("%2d", ecs[s0]).resetFmt();
+		l.add().add("/");
+		l.add().setFmt(CGreen, null, true).addf("%2d", ecs[s1]).resetFmt();
+		l.add().add("/");
+		l.add().setFmt(CBlue, null, true).addf("%2d", ecs[s2]).resetFmt();
 	}
 	override ItemBase[] getChildren_(Path spec) {
 		ItemBase[] rv;
@@ -189,13 +242,17 @@ class ItemShow: ItemBase {
 		if (spec.isEverything()) {
 			spec.drop();
 			rv ~= this;
+			rv ~= new ItemLevelChange(c, level, 1);
 			foreach (ep; this.I.eps) {
 				if (ep is null) continue;
 				rv ~= new ItemEpisode(c, ep, level+1).getChildren(spec);
 			}
+			rv ~= new ItemLevelChange(c, level, -1);
 		} else {
 			auto idx = parseIntExc(spec[0]);
+			rv ~= new ItemLevelChange(c, level, 1);
 			rv ~= new ItemEpisode(c, this.I.eps[idx]).getChildren(spec.drop());
+			rv ~= new ItemLevelChange(c, level, -1);
 		}
 		return rv;
 	}
@@ -207,7 +264,7 @@ class ItemShowSet: ItemBase {
 		this.I = ss;
 		super(c, level);
 	}
-	override string formatHR(CLI c) {
+	override string formatHR() {
 		return format("%3d: %s", this.I.id, this.I.desc);
 	}
 	override ItemBase[] getChildren_(Path spec) {
@@ -216,7 +273,9 @@ class ItemShowSet: ItemBase {
 		if (spec.isEverything()) {
 			spec.drop();
 			rv ~= this;
+			rv ~= new ItemLevelChange(c, level, 1);
 			foreach (show; this.I.shows) rv ~= new ItemShow(c, show, level+1).getChildren(spec);
+			rv ~= new ItemLevelChange(c, level, -1);
 		} else {
 			auto idx = parseIntExc(spec[0]);
 			TShow s;
@@ -228,7 +287,9 @@ class ItemShowSet: ItemBase {
 				}
 			}
 			if (s is null) throw new InvalidSpec(spec[0]);
+			rv ~= new ItemLevelChange(c, level, 1);
 			rv ~= new ItemShow(c, s).getChildren(spec.drop());
+			rv ~= new ItemLevelChange(c, level, -1);
 		}
 		return rv;
 	}
@@ -256,11 +317,37 @@ class CmdLS: Cmd {
 		this.usage = "ls ...";
 	}
 	override int run(CLI c, string[] args) {
-		foreach (spec; args) {
-			ItemBase[] items = c.getItems(spec);
-			foreach (it; items) {
-				it.printHR(c);
+		ItemBase[] items;
+		size_t i;
+
+		void printSub() {
+			auto t = c.newTable();
+			size_t lines_out = 0;
+			size_t lines_buf = 0;
+			for(; i < items.length; i++) {
+				auto it = items[i];
+				if (it.level_delta) {
+					if (it.level_delta > 0) {
+						writef("%s", t.getStr(lines_out));
+						lines_out += lines_buf;
+						lines_buf = 0;
+						i += 1;
+						printSub();
+						continue;
+					} else {
+						break;
+					}
+				}
+				it.formatSubTable(t);
+				lines_buf += 1;
 			}
+			writef("%s", t.getStr(lines_out));
+		}
+
+		foreach (spec; args) {
+			items = c.getItems(spec);
+			i = 0;
+			printSub();
 		}
 		return 0;
 	}
@@ -524,8 +611,6 @@ class CmdPlay: Cmd {
 		return [expandTilde("~/.vtrack/mp"), path];
 	}
 	override int run(CLI c, string[] args) {
-		double done_threshold = 0.8;
-
 		TShow show = c.getShow(args[0]);
 		if (args.length >= 2) {
 			ep = c.getEpisodeExc(args[0], args[1]);
@@ -594,7 +679,7 @@ class CmdPlay: Cmd {
 		}
 
 		this.flushData();
-		this.store.updateEpisodeWatched(ep, done_threshold);
+		this.store.updateEpisodeWatched(ep, c.done_threshold);
 
 		if (!mp_gone) mp_gone = mprun.p.waitPid(&rc, WNOHANG) > 0;
 		if (!mp_gone) {
@@ -653,6 +738,7 @@ public:
 	SqliteConn db_conn;
 	string base_dir;
 	string db_fn = "db.sqlite";
+	double done_threshold = 0.8;
 	
 	this() {
 		this.base_dir = expandTilde("~/.vtrack/");
@@ -661,6 +747,9 @@ public:
 		foreach (cmd; cmds) {
 			cmd.reg(&this.cmd_map);
 		}
+	}
+	auto newTable() {
+		return new ANSITable();
 	}
 	void openStore() {
 		this.db_conn = new SqliteConn(buildPath(this.base_dir, this.db_fn), SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX);
