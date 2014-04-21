@@ -1,4 +1,4 @@
-import std.array: split;
+import std.array: appender, split;
 import std.conv: to;
 import std.datetime: Clock, SysTime, DateTime;
 import std.exception: assumeUnique;
@@ -310,6 +310,20 @@ class Cmd {
 	}
 }
 
+
+private alias void delegate() td_v;
+
+private class SeqPrint {
+	string[] lines;
+	this() {}
+	td_v dPrintT(size_t min, size_t max) {
+		void printT() {
+			writef("%s\n", join(lines[min..max], "\n"));
+		}
+		return &printT;
+	}
+}
+
 class CmdLS: Cmd {
 	this() {
 		this.min_args = 1;
@@ -318,17 +332,21 @@ class CmdLS: Cmd {
 	}
 	override int run(CLI c, string[] args) {
 		ItemBase[] items;
+		td_v[] prints;
 		size_t i;
 
 		void printSub() {
 			auto t = c.newTable();
 			size_t lines_out = 0;
 			size_t lines_buf = 0;
+			auto lines = appender(cast(string[])[]);
+			auto sp = new SeqPrint();
+
 			for(; i < items.length; i++) {
 				auto it = items[i];
 				if (it.level_delta) {
 					if (it.level_delta > 0) {
-						writef("%s", t.getStr(lines_out));
+						prints ~= sp.dPrintT(lines_out, lines_out+lines_buf);
 						lines_out += lines_buf;
 						lines_buf = 0;
 						i += 1;
@@ -341,13 +359,17 @@ class CmdLS: Cmd {
 				it.formatSubTable(t);
 				lines_buf += 1;
 			}
-			writef("%s", t.getStr(lines_out));
+			prints ~= sp.dPrintT(lines_out, lines_out+lines_buf);
+			lines ~= t.getLines();
+			sp.lines = lines.data;
 		}
 
 		foreach (spec; args) {
 			items = c.getItems(spec);
 			i = 0;
+			prints = [];
 			printSub();
+			foreach (d; prints) d();
 		}
 		return 0;
 	}
