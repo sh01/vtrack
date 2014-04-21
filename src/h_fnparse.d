@@ -13,7 +13,7 @@ private:
 	static auto RE_CRC32 = ctRegex!r"^(.*)([\[(][a-f0-9A-F]{8}[\]\)])$";
 	static auto RE_GROUP_START = ctRegex!r"^[\[(]([^\]\)]*)[\]\)](.*)$";
 	static auto RE_SCHAR_START = ctRegex!r"^([^\[\]()]*)(.*)$";
-	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|E[Pp]|SP|s)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
+	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|E[Pp]?|SP|s)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
 public:
 	string fn;
 	bool done;
@@ -37,7 +37,7 @@ public:
 		string r = this.fn;
 		// Identify trailing partial download indicator, and strip if present
 		auto m = matchFirst(fn, RE_PARTIAL);
-		this.done = (m.length == 0);
+		this.done = (m.length == 0) && (this.fn.length > 0) && (this.fn[0] != '.');
 		if (m.length > 0) r = m[1];
 		// Identify traditional windows file extension and strip if present.
 		m = matchFirst(r, RE_EXT);
