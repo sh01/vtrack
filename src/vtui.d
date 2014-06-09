@@ -385,6 +385,7 @@ class CmdMakeShowSet: Cmd {
 		string desc = args[0];
 
 		auto s = new TShowSet(desc);
+		c.store.readAllShowSets();
 		c.store.addShowSet(s);
 		writef("Added: %d: %s\n", s.id, cescape(s.desc));
 		return 0;
