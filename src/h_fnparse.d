@@ -13,7 +13,7 @@ private:
 	static auto RE_CRC32 = ctRegex!r"^(.*)([\[(][a-f0-9A-F]{8}[\]\)])$";
 	static auto RE_GROUP_START = ctRegex!r"^[\[(]([^\]\)]*)[\]\)](.*)$";
 	static auto RE_SCHAR_START = ctRegex!r"^([^\[\]()]*)(.*)$";
-	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|E[Pp]?|SP|s)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
+	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|[Ee][Pp]?|SP|s)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
 public:
 	string fn;
 	bool done;
