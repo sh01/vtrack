@@ -13,7 +13,7 @@ private:
 	static auto RE_CRC32 = ctRegex!r"^(.*)([\[(][a-f0-9A-F]{8}[\]\)])$";
 	static auto RE_GROUP_START = ctRegex!r"^[\[(]([^\]\)]*)[\]\)](.*)$";
 	static auto RE_SCHAR_START = ctRegex!r"^([^\[\]()]*)(.*)$";
-	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|[Ee][Pp]?|SP|s)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
+	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|[Ee][Pp]?|SP|s|[0-9]+x)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
 public:
 	string fn;
 	bool done;
@@ -86,8 +86,13 @@ public:
 		
 		foreach (m2; ms) {
 			if (m2.length > 0) {
-				this.idx = to!int(m2[2]);
-				if (m2.length > 1) this.ver = m2[3];
+				auto idx = to!int(m2[2]);
+				if (idx >= 1980) {
+					// *really* not likely to be an episode number.
+					continue;
+				}
+				this.idx = idx;
+				if (m2.length > 2) this.ver = m2[3];
 			}
 		}
 	}
