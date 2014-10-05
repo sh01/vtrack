@@ -27,7 +27,7 @@ public:
 		return ((this.ext == "mkv") || (this.ext == "ogm") || (this.ext == "mp4") || (this.ext == "avi"));
 	}
 	bool okToAdd() {
-		return this.done && (this.idx > 0) && this.okExt();
+		return this.done && (this.idx >= 0) && this.okExt();
 	}
 	override string toString() {
 		return format("FN(%d; %d; %s %s %s; %s %s %s)", this.done, this.idx, cescape(this.ext), cescape(this.base), cescape(this.group), cescape(this.crc32), this.meta_misc, cescape(this.ver));
