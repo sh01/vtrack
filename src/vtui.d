@@ -556,6 +556,7 @@ class CmdPlay: Cmd {
 	int status_rep_count_limit = 10;
 	int push_delay = 16;
 	int eof_slop_duration = 16;
+	char[] status_tlt = std.string.makeTrans("\n","\r").dup;
 	this() {
 		this.min_args = 1;
 		this.commands = ["play", "p"];
@@ -576,10 +577,15 @@ class CmdPlay: Cmd {
 	int ts_prev = -1;
 	int push_counter = 0;
 	void passStderr(char[] data) {
-		this.bw_stderr.write(data);
-
 		auto m = matchFirst(data, this.RE_PS);
-		if (m.length == 0) return; //Not a (full) regular status line; while they can get split up, this is rare, and we can afford some sloppiness.
+		if (m.length == 0) {
+			//Not a (full) regular status line; while they can get split up, this is rare, and we can afford some sloppiness.
+			this.bw_stderr.write(data);
+			return;
+		}
+		auto data_out = std.array.replace(data, "\n", "\r");
+		this.bw_stderr.write(data_out);
+
 		if (m_prev != m[0]) {
 			m_prev = m[0].idup;
 			match_count = 1;
