@@ -578,12 +578,17 @@ class CmdPlay: Cmd {
 	int push_counter = 0;
 	void passStderr(char[] data) {
 		auto m = matchFirst(data, this.RE_PS);
+		char[] data_out;
+		if (data.length >= 8 && data[0..8] == "\x1b[0mAV: ") {
+			data_out = std.array.replace(data, "\n", "\r");
+		} else {
+			data_out = data;
+		}
 		if (m.length == 0) {
 			//Not a (full) regular status line; while they can get split up, this is rare, and we can afford some sloppiness.
 			this.bw_stderr.write(data);
 			return;
 		}
-		auto data_out = std.array.replace(data, "\n", "\r");
 		this.bw_stderr.write(data_out);
 
 		if (m_prev != m[0]) {
