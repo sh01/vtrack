@@ -571,7 +571,7 @@ class CmdPlay: Cmd {
 		auto m = matchFirst(data, this.RE_MP_EOF);
 		if (m.length > 0) this.mp_eof = true;
 	}
-	static auto RE_PS = ctRegex!(r"^\x1b\[0mAV: ([0-9]+:[0-9][0-9]:[0-9][0-9]) / ([0-9]+:[0-9][0-9]:[0-9][0-9]) ", "m");
+	static auto RE_PS = ctRegex!(r"^\x1b\[0mAV: -?([0-9]+:[0-9][0-9]:[0-9][0-9]) / ([0-9]+:[0-9][0-9]:[0-9][0-9]) ", "m");
 	int match_count = 0;
 	string m_prev;
 	int ts_prev = -1;
