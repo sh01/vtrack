@@ -46,7 +46,7 @@ class MPRun {
 	}
 
 	void setupPty(EventDispatcher ed, t_fd fd_i_source) {
-		auto fd_pty_master = this.p.setupPty(StdFd.IN | StdFd.OUT);
+		auto fd_pty_master = this.p.setupPty(StdFd.OUT);
 
 		// We don't want to use the pty for subprocess stdin; interfacing works best and easiest if mplayer just takes our stdin and manipulates it however it feels is appropriate. The stdout pty is required, though, since it doesn't even try to manipulate stdin settings if that's not there.
 		this.p.fd_i = 0;
@@ -61,9 +61,14 @@ class MPRun {
 		ioctl(fd_pty_master, TIOCSWINSZ, &wsz);
 	}
 
-	void linkErr(EventDispatcher ed, t_fd fd=-1) {
-		if (fd == -1) fd = this.p.fd_e;
-		this.fd_e = ed.WrapFD(this.p.fd_e);
+	void linkErr(EventDispatcher ed, t_fd fd_i_source) {
+		auto fd_pty_master = this.p.fd_e; //FIXME
+		//auto fd_pty_master = this.p.setupPty(StdFd.ERR);
+		//winsize wsz;
+		//ioctl(fd_i_source, TIOCGWINSZ, &wsz);
+		//ioctl(fd_pty_master, TIOCSWINSZ, &wsz);
+
+		this.fd_e = ed.WrapFD(fd_pty_master);
 		this.fd_e.setCallbacks(makeCopier(this.fd_e, this.oe, this.ce));
 		this.fd_e.AddIntent(IOI_READ);
 	}

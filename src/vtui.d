@@ -688,7 +688,7 @@ class CmdPlay: Cmd {
 		auto mprun = new MPRun(this.getCommand(path), &this.passStdout, &this.passStderr, &this.processClose, &this.processClose);
 		mprun.setupPty(ed, 0);
 		mprun.start(ed);
-		mprun.linkErr(ed);
+		mprun.linkErr(ed, 0);
 
 		ed.Run();
 		int rc;
