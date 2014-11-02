@@ -46,8 +46,7 @@ class MPRun {
 	}
 
 	void setupPty(EventDispatcher ed, t_fd fd_i_source) {
-		auto fd_pty_master = this.p.setupPty();
-		auto fd_pty_slave = this.p.fd_o;
+		auto fd_pty_master = this.p.setupPty(StdFd.IN | StdFd.OUT);
 
 		// We don't want to use the pty for subprocess stdin; interfacing works best and easiest if mplayer just takes our stdin and manipulates it however it feels is appropriate. The stdout pty is required, though, since it doesn't even try to manipulate stdin settings if that's not there.
 		this.p.fd_i = 0;
