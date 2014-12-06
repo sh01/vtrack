@@ -643,8 +643,8 @@ class CmdPlay: Cmd {
 		logf(20, "Shutting down on close of FD %d.", fd.fd);
 		this.sa.ed.shutdown = 1;
 	}
-	string[] getCommand(string path) {
-		return [expandTilde("~/.vtrack/mp"), path];
+	string[] getCommand() {
+		return [expandTilde("~/.vtrack/mp")];
 	}
 	override int run(CLI c, string[] args) {
 		TShow show = c.getShow(args[0]);
@@ -687,10 +687,10 @@ class CmdPlay: Cmd {
 		this.bw_stdout = new BufferWriter(ed, 1);
 		this.bw_stderr = new BufferWriter(ed, 2);
 
-		auto mprun = new MPRun(this.getCommand(path), &this.passStdout, &this.passStderr, &this.processClose, &this.processClose);
-		mprun.setupPty(ed, 0);
+		auto mprun = new MPRun(this.getCommand, [path]);
+		//mprun.setupPty(ed, 0);
 		mprun.start(ed);
-		mprun.linkErr(ed, 0);
+		//mprun.linkErr(ed, 0);
 
 		ed.Run();
 		int rc;
