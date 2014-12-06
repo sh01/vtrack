@@ -633,6 +633,8 @@ class CmdPlay: Cmd {
 		}
 	}
 	void flushData() {
+		if (this.trace is null) return;
+
 		this.trace.ts_end = Clock.currTime();
 		this.store.pushTrace(trace);
 	}
