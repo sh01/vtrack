@@ -4,6 +4,7 @@ import core.sys.posix.unistd: read;
 import core.sys.posix.sys.ioctl;
 import core.sys.posix.sys.socket;
 import core.sys.posix.sys.un;
+import core.time;
 
 import eudorina.io;
 import eudorina.logging;
@@ -82,17 +83,30 @@ class MPRun {
 		return this.mm.finished_file;
 	}
 
-	void start(EventDispatcher ed) {
-		this.finished = false;
-
-		this.p.Spawn(this.argv);
-		sleep(1);
+	Timer connect_timer;
+	void tryConnect() {
+		if (this.mm !is null) {
+			this.connect_timer.stop();
+			return;
+		}
 		auto fd = this.pokeSock();
+		if (fd < 0) return;
 		logf(20, "Sock connect rv: %d", fd);
+		this.connect_timer.stop();
+
 		this.mm = new MPMaster(ed.WrapFD(fd));
 		this.mm.upcallMediaTime = &this.handleMediaTime;
 		this.mm.upcallInitDone = &this.handleInitDone;
 		this.mm.upcallFinish = &this.handleFinish;
+	}
+
+	EventDispatcher ed;
+	void start(EventDispatcher ed) {
+		this.ed = ed;
+		this.finished = false;
+
+		this.p.Spawn(this.argv);
+		this.connect_timer = ed.NewTimer(&this.tryConnect, dur!"msecs"(20), true);
 	}
 }
 
@@ -181,6 +195,7 @@ class MPMaster {
 		sock.AddIntent(IOI_READ);
 		this.initMsgHandlers();
 		this.observeProperty("playback-time");
+		this.observeProperty("length");
 		this.getProperty("length", &this.handleLength);
 		this.setProperty("pause", false);
 
@@ -205,14 +220,21 @@ class MPMaster {
 		}
 	}
 
+	void updateLength(MpMsg msg) {
+		auto data = ("data" in msg.object);
+		if ((data !is null) && (data.type is JSON_TYPE.FLOAT)) {
+			if (this.media_length != data.floating) {
+				this.media_length = data.floating;
+				logf(20, "Setting length: %f", data.floating);
+			}
+		} else {
+			logf(30, "Unable to parse mp length reply: %s", cescape(toJSON(&msg)));
+		}
+	}
+
 	void handleLength(bool success, MpMsg msg) {
 		if (success) {
-			auto data = ("data" in msg.object);
-			if ((data !is null) && (data.type is JSON_TYPE.FLOAT)) {
-				this.media_length = data.floating;
-			} else {
-				logf(30, "Unable to parse mp length reply: %s", cescape(toJSON(&msg)));
-			}
+			this.updateLength(msg);
 		} else {
 			logf(30, "MP length query failed: %s", cescape(toJSON(&msg)));
 		}
@@ -253,6 +275,9 @@ class MPMaster {
 			   this.media_time = data.floating;
 			   this.finished_file = false;
 			   this.upcallMediaTime(this);
+			   break;
+		   case "length":
+			   this.updateLength(msg);
 			   break;
 		   default:
 			   throw new MPParseError(format("Ignoring change in unknown mpv property %s.", cescape(name.str)));
@@ -339,7 +364,7 @@ class MPMaster {
 				logf(30, "Failed to parse mpv json %s: %s", cescape(line), cescape(exc.toString()));
 				continue;
 			}
-			logf(10, "mp JSON: %s", cescape(toJSON(&val)));
+			//logf(10, "mp JSON: %s", cescape(toJSON(&val)));
 
 			// Classify line type and pass data on.
 			JSONValue *msgtype;

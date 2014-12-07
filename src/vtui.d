@@ -562,23 +562,26 @@ class CmdPlay: Cmd {
 		this.usage = "play <show_spec> [ep index]";
 	}
 
-
-	int ep_length = -1;
-	void handleMPInit(MPRun mpr) {
-		 this.ep_length = cast(int)mpr.mm.media_length;
-	}
+	void handleMPInit(MPRun mpr) { }
 
 	int match_count = 0;
 	int ts_last = -1;
 	int push_counter = 0;
 	void handleMediaTime(MPRun mpr) {
 		auto ts_now = cast(int)mpr.mm.media_time;
+		auto ep_length = cast(int)mpr.mm.media_length;
 
 		if (ts_last == ts_now) {
 			this.match_count += 1;
 		} else {
 			this.match_count = 0;
 			this.ts_last = ts_now;
+		}
+
+		bool length_updated = false;
+		if (ep_length != this.ep.length) {
+			this.ep.length = ep_length;
+			length_updated = true;
 		}
 
 		if (match_count == status_rep_count_limit) {
@@ -591,11 +594,11 @@ class CmdPlay: Cmd {
 					trace.m.setLength(ep_length);
 				}
 
-				if (ep_length != this.ep.length) {
-					this.ep.length = ep_length;
+				if (length_updated) {
 					trace.m.setLength(ep_length);
 					this.store.pushEp(this.ep);
 				}
+
 				// Mark this second as having been watched.
 				trace.m[ts_now] = 1;
 				this.push_counter += 1;
