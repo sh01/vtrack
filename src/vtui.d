@@ -547,7 +547,6 @@ int parseMpTime(const(char)[] tspec) {
 }
 
 class CmdPlay: Cmd {
-	BufferWriter bw_stdout, bw_stderr;
 	ServiceAggregate sa = null;
 	TEpisode ep;
 	TStorage store;
@@ -563,52 +562,30 @@ class CmdPlay: Cmd {
 		this.usage = "play <show_spec> [ep index]";
 	}
 
-	static auto RE_MP_EOF = ctRegex!(r"^Exiting... \(End of file\)\x0d?$", "m");
-	bool mp_eof = false;
-	void passStdout(char[] data) {
-		this.bw_stdout.write(data);
 
-		auto m = matchFirst(data, this.RE_MP_EOF);
-		if (m.length > 0) this.mp_eof = true;
+	int ep_length = -1;
+	void handleMPInit(MPRun mpr) {
+		 this.ep_length = cast(int)mpr.mm.media_length;
 	}
-	static auto RE_PS = ctRegex!(r"^\x1b\[0mAV: -?([0-9]+:[0-9][0-9]:[0-9][0-9]) / ([0-9]+:[0-9][0-9]:[0-9][0-9]) ", "m");
-	int match_count = 0;
-	string m_prev;
-	int ts_prev = -1;
-	int push_counter = 0;
-	void passStderr(char[] data) {
-		auto m = matchFirst(data, this.RE_PS);
-		char[] data_out;
-		if (data.length >= 8 && data[0..8] == "\x1b[0mAV: ") {
-			data_out = std.array.replace(data, "\n", "\r");
-		} else {
-			data_out = data;
-		}
-		if (m.length == 0) {
-			//Not a (full) regular status line; while they can get split up, this is rare, and we can afford some sloppiness.
-			this.bw_stderr.write(data);
-			return;
-		}
-		this.bw_stderr.write(data_out);
 
-		if (m_prev != m[0]) {
-			m_prev = m[0].idup;
-			match_count = 1;
+	int match_count = 0;
+	int ts_last = -1;
+	int push_counter = 0;
+	void handleMediaTime(MPRun mpr) {
+		auto ts_now = cast(int)mpr.mm.media_time;
+
+		if (ts_last == ts_now) {
+			this.match_count += 1;
 		} else {
-			if (this.mp_eof) {
-				log(30, "Flagged mp EOF signalling prematurely; clearing.");
-				this.mp_eof = false;
-			}
-			match_count += 1;
+			this.match_count = 0;
+			this.ts_last = ts_now;
 		}
+
 		if (match_count == status_rep_count_limit) {
 			// Figure out where we are and update our watch model accordingly.
-			int ts_now = parseMpTime(m[1]);
-			int ep_length = parseMpTime(m[2]) + 1;
 			if (ts_now > ep_length) {
 				logf(30, "Beyond end of ep: %d > %d. Ignoring status line.", ts_now, ep_length);
 			} else {
-				//logf(20, "DO0: %d", ts_now);
 				if (this.trace is null) {
 					this.trace = this.store.newTrace(this.ep);
 					trace.m.setLength(ep_length);
@@ -628,20 +605,22 @@ class CmdPlay: Cmd {
 					this.flushData();
 					this.push_counter = 0;
 				}
-				ts_prev = ts_now;
+				ts_last = ts_now;
 			}
 		}
 	}
+
+	void handleFinish(MPRun mpr) {
+		if (sa.ed.shutdown) return; // No need to be spammy about it.
+		logf(20, "Shutting down on mpv socket close.");
+		this.sa.ed.shutdown = 1;
+	}
+
 	void flushData() {
 		if (this.trace is null) return;
 
 		this.trace.ts_end = Clock.currTime();
 		this.store.pushTrace(trace);
-	}
-	void processClose(FD fd) {
-		if (sa.ed.shutdown) return; // No need to be spammy about it.
-		logf(20, "Shutting down on close of FD %d.", fd.fd);
-		this.sa.ed.shutdown = 1;
 	}
 	string[] getCommand() {
 		return [expandTilde("~/.vtrack/mp")];
@@ -684,13 +663,13 @@ class CmdPlay: Cmd {
 		this.sa = new ServiceAggregate();
 		this.sa.setupDefaults();
 		auto ed = this.sa.ed;
-		this.bw_stdout = new BufferWriter(ed, 1);
-		this.bw_stderr = new BufferWriter(ed, 2);
 
 		auto mprun = new MPRun(this.getCommand, [path]);
+		mprun.upcallInitDone = &this.handleMPInit;
+		mprun.upcallMediaTime = &this.handleMediaTime;
+		mprun.upcallFinish = &this.handleFinish;
 		//mprun.setupPty(ed, 0);
 		mprun.start(ed);
-		//mprun.linkErr(ed, 0);
 
 		ed.Run();
 		int rc;
@@ -700,18 +679,18 @@ class CmdPlay: Cmd {
 			mprun.p.kill();
 		}
 		// Do final data flush here, so we do it in parallel to the player terminating.
-		if (this.ts_prev == this.ep.length-2) {
+		if (this.ts_last == this.ep.length-2) {
 			// Last confirmed line is from END-1. There's a high chance either the media player was off by this much,
 			// or the last fractional second wasn't long enough to reach our threshold.
 			// We'll count the last one as watched also, in this case; this is very ugly, but should give us better results in practice.
-			this.trace.m[this.ts_prev+1] = 1;
-		} else if (this.mp_eof && (this.ts_prev < this.ep.length-1) && (this.ts_prev+eof_slop_duration >= this.ep.length-1)) {
+			this.trace.m[this.ts_last+1] = 1;
+		} else if (mprun.finishedFile() && (this.ts_last < this.ep.length-1) && (this.ts_last+eof_slop_duration >= this.ep.length-1)) {
 			// mplayer signalled that it exited because it hit the end of its file just before quitting.
 			// It's not very precise about playback duration; therefore, if we're still within the slop window,
 			// fill up the rest of the mask so we don't end up with a time window we can never fill up with normal playback.
 			// There's still some inaccuracy this way, but it's better than the simple alternative of just not doing this.
-			logf(20, "Marking %d imaginary trailing seconds of episode as watched.", this.ep.length-1-this.ts_prev);
-			for (int ts = this.ts_prev+1; ts < this.ep.length; ts++) this.trace.m[ts] = 1;
+			logf(20, "Marking %d imaginary trailing seconds of episode as watched.", this.ep.length-1-this.ts_last);
+			for (int ts = this.ts_last+1; ts < this.ep.length; ts++) this.trace.m[ts] = 1;
 		}
 
 		this.flushData();
