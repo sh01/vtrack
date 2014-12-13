@@ -586,7 +586,7 @@ class CmdPlay: Cmd {
 
 		if (match_count == status_rep_count_limit) {
 			// Figure out where we are and update our watch model accordingly.
-			if (ts_now > ep_length) {
+			if (ts_now >= ep_length) {
 				logf(30, "Beyond end of ep: %d > %d. Ignoring status line.", ts_now, ep_length);
 			} else {
 				if (this.trace is null) {
