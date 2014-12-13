@@ -518,10 +518,10 @@ class CmdSAddScan: Cmd {
 		long succ, ext, fail;
 		foreach (pn; args[1..$]) {
 			auto bp = expandTilde(pn);
-			// Don't combin non-shallow span modes with followSymlink=true here; it makes the call stat every file, and error out on dangling symlinks; that's understandable behavior, but also rather undesirable for git-annex dirs.
+			// Don't combine non-shallow span modes with followSymlink=true here; it makes the call stat every file, and error out on dangling symlinks; that's understandable behavior, but also rather undesirable for git-annex dirs.
 			foreach (string fpn; dirEntries(bp, SpanMode.shallow)) {
 				fn = new FN(baseName(fpn));
-				if (!fn.okExt()) {
+				if (!fn.okExtVideo()) {
 					ext += 1;
 				} else if (!fn.okToAdd()) {
 					logf(30, "Not ok: %s", fn);
@@ -722,7 +722,7 @@ class CmdDbgFnParse: Cmd {
 		foreach (fn_; stdin.byLine()) {
 			fn = new FN(fn_.idup);
 			logf(20, "%s", fn);
-			if (!fn.okExt()) {
+			if (!fn.okExtVideo()) {
 				ext += 1;
 			} else if (!fn.okToAdd()) {
 				logf(30, "Not ok: %s", fn);
