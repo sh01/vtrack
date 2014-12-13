@@ -736,15 +736,6 @@ class CmdDbgFnParse: Cmd {
 	}
 }
 
-bool seePath(const char[] path) {
-	try {
-		getLinkAttributes(path);
-	} catch (std.file.FileException e) {
-		return false;
-	}
-	return true;
-}
-
 immutable DateTime unixBOT = DateTime(1970, 01, 01, 01, 00, 00);
 
 class CLI {

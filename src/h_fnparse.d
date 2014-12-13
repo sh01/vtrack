@@ -1,9 +1,19 @@
 import eudorina.logging;
 import eudorina.text;
 
+import std.file;
 import std.format: to;
 import std.regex;
 import std.string: format, strip;
+
+bool seePath(const char[] path) {
+	try {
+		getLinkAttributes(path);
+	} catch (std.file.FileException e) {
+		return false;
+	}
+	return true;
+}
 
 class FN {
 private:
