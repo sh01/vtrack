@@ -88,15 +88,9 @@ public:
 				break;
 			}
 		}
-		// Sometimes there's various other pieces of metadata after the main id string, typically again containing brackets, parens or similar. We try to split it off, though this stuff is too heterogenous for us to try to parse it.
-		m = matchFirst(r, RE_SCHAR_START);
-		if (m.length > 0) {
-			this.meta_misc ~= m[2];
-			r = m[1];
-		}
-		this.base = strip(r);
+
+		// Try to find an episode number now. The further-down processing tends to be unreliable.
 		auto ms = matchAll(r, RE_NUM);
-		
 		foreach (m2; ms) {
 			if (m2.length > 0) {
 				auto idx = to!int(m2[2]);
@@ -108,5 +102,13 @@ public:
 				if (m2.length > 2) this.ver = m2[3];
 			}
 		}
+
+		// Sometimes there's various other pieces of metadata after the main id string, typically again containing brackets, parens or similar. We try to split it off, though this stuff is too heterogenous for us to try to parse it.
+		m = matchFirst(r, RE_SCHAR_START);
+		if (m.length > 0) {
+			this.meta_misc ~= m[2];
+			r = m[1];
+		}
+		this.base = strip(r);
 	}
 }
