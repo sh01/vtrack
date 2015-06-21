@@ -300,6 +300,7 @@ class Cmd {
 	int min_args = -1;
 	string usage = "...";
 	string[] commands;
+	immutable static bool read_only = false;
 	int run(CLI c, string[] s) {
 		throw new Exception("Not implemented.");
 	}
@@ -325,6 +326,7 @@ private class SeqPrint {
 }
 
 class CmdLS: Cmd {
+	immutable static bool read_only = true;
 	this() {
 		this.min_args = 1;
 		this.commands = ["ls"];
@@ -488,6 +490,7 @@ class CmdAddEpPath: Cmd {
 }
 
 class CmdDisplayTraces: Cmd {
+	immutable static bool reaD_only = true;
 	this() {
 		this.min_args = 2;
 		this.commands = ["lstrace"];
@@ -760,8 +763,9 @@ public:
 	auto newTable() {
 		return new ANSITable();
 	}
-	void openStore() {
-		this.db_conn = new SqliteConn(buildPath(this.base_dir, this.db_fn), SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX);
+	void openStore(bool read_only) {
+		int rm_flag = read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
+		this.db_conn = new SqliteConn(buildPath(this.base_dir, this.db_fn), rm_flag|SQLITE_OPEN_NOMUTEX);
 		this.store = new TStorage(this.db_conn);
 		this.store.readData();
 	}
@@ -874,6 +878,9 @@ public:
 			return 3;
 		}
 		int rv;
+		if (!this.db_conn) {
+			this.openStore(ch.read_only);
+		}
 		try {
 			rv = ch.run(this, args[2..args.length]);
 		} catch (InvalidShowSpec e) {
@@ -896,6 +903,6 @@ public:
 int main(string[] args) {
 	SetupLogging();
 	auto cli = new CLI();
-	cli.openStore();
+	//cli.openStore();
 	return cli.runCmd(args);
 }
