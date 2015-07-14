@@ -1,6 +1,7 @@
 import eudorina.logging;
 import eudorina.text;
 
+import std.conv;
 import std.file;
 import std.format: to;
 import std.regex;
@@ -93,8 +94,13 @@ public:
 		auto ms = matchAll(r, RE_NUM);
 		foreach (m2; ms) {
 			if (m2.length > 0) {
-				auto idx = to!int(m2[2]);
-				if (idx >= 1980) {
+				int idx;
+				try {
+					idx = to!int(m2[2]);
+				} catch (std.conv.ConvOverflowException oe) {
+					idx = -1;
+				}
+				if (idx < 0 || idx >= 1980) {
 					// *really* not likely to be an episode number.
 					continue;
 				}
