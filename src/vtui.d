@@ -652,8 +652,8 @@ class CmdPlay: Cmd {
 		string path = null;
 		foreach (path_; paths) {
 			string expp = expandTilde(path_);
-			if (!seePath(expp)) {
-				logf(20, "Unable to see file at %s.", cescape(path_));
+			if (!exists(expp)) {
+				logf(20, "Unable to access file at %s.", cescape(path_));
 				continue;
 			}
 			logf(20, "Found episode instance at %s; good.", cescape(path_));
