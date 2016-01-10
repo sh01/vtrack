@@ -6,6 +6,7 @@ import std.file;
 import std.format: to;
 import std.regex;
 import std.string: format, strip;
+import std.stdio;
 
 bool seePath(const char[] path) {
 	try {
@@ -16,6 +17,17 @@ bool seePath(const char[] path) {
 	return true;
 }
 
+int cmp_epnum_prefix(string p0, string p1) {
+	if (p0 == p1) return 0;
+	foreach (s; ["", " ", "_"]) {
+		if (p0 == s) return 1;
+		if (p1 == s) return -1;
+	}
+	if (p0 > p1) return 1;
+	if (p0 < p1) return -1;
+	return 0;
+}
+
 class FN {
 private:
 	static auto RE_PARTIAL = ctRegex!r"^(.*)\.part$";
@@ -24,7 +36,7 @@ private:
 	static auto RE_CRC32 = ctRegex!r"^(.*)([\[(][a-f0-9A-F]{8}[\]\)])$";
 	static auto RE_GROUP_START = ctRegex!r"^[\[(]([^\]\)]*)[\]\)](.*)$";
 	static auto RE_SCHAR_START = ctRegex!r"^([^\[\]()]*)(.*)$";
-	static auto RE_NUM = ctRegex!r"(^|[^A-Za-z0-9]|[Ee][Pp]?|SP|s|[0-9]\b{1,2}x)([0-9]+)(v[0-9]+[a-z]?)?([^A-Za-z0-9]|$)";
+	static auto RE_NUM = ctRegex!r"(?:(?P<pre>^|[^A-Za-z0-9])|[Ee][Pp]?|[^A-Za-z0-9]SP|[^A-Za-z0-9]s|[0-9]\b{1,2}x)(?P<num>[0-9]+)(?P<ver>v[0-9]+[a-z]?)?(?:[^A-Za-z0-9]|$)";
 public:
 	string fn;
 	bool done;
@@ -92,21 +104,24 @@ public:
 
 		// Try to find an episode number now. The further-down processing tends to be unreliable.
 		auto ms = matchAll(r, RE_NUM);
+		string prefix_last = "\xff";
+
 		foreach (m2; ms) {
-			if (m2.length > 0) {
-				int idx;
-				try {
-					idx = to!int(m2[2]);
-				} catch (std.conv.ConvOverflowException oe) {
-					idx = -1;
-				}
-				if (idx < 0 || idx >= 1980) {
-					// *really* not likely to be an episode number.
-					continue;
-				}
-				this.idx = idx;
-				if (m2.length > 2) this.ver = m2[3];
+			int idx;
+	   		try {
+				idx = to!int(m2["num"]);
+	   		} catch (std.conv.ConvOverflowException oe) {
+				idx = -1;
 			}
+			if (idx < 0 || idx >= 1980) {
+				// *really* not likely to be an episode number.
+				continue;
+	   		}
+			//writef("DO0: %d '%s' '%s' %d\n", idx, m2["pre"], prefix_last, cmp_epnum_prefix(m2["pre"], prefix_last));
+			if ((this.idx != -1) && (cmp_epnum_prefix(m2["pre"], prefix_last) <= 0)) continue;
+			prefix_last = m2["pre"];
+			this.idx = idx;
+			if (m2["ver"] != "") this.ver = m2["ver"];
 		}
 
 		// Sometimes there's various other pieces of metadata after the main id string, typically again containing brackets, parens or similar. We try to split it off, though this stuff is too heterogenous for us to try to parse it.
