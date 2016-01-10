@@ -20,6 +20,6 @@ done
 popd
 
 for bn in vtui link_subs; do
-	CMD0="gdc -g -o build/bin/${bn} -Ibuild/include/ -I../eudorina/build/include/ -Lbuild/obj/vtrack/ -L../eudorina/build/lib/eudorina/ -L../eudorina/build/lib/eudorina/db/ -fversion=Linux src/${bn}.d -lh_fnparse -lbase -lstructured_text -lsqlit3 -lservice_aggregation -lsignal -lsqlite3 -lmpwrap -lio -ltext -llogging"
+	CMD0="gdc -g -o build/bin/${bn} -Ibuild/include/ -I../eudorina/build/include/ -Lbuild/obj/vtrack/ -L../eudorina/build/lib/eudorina/ -L../eudorina/build/lib/eudorina/db/ -fversion=Linux src/${bn}.d -lh_fnparse -lbase -lstructured_text -lsqlit3 -lservice_aggregation -lsignal -lsqlite3 -lmpwrap -lio -ltext -llogging -lz"
 	echo $CMD0; $CMD0
 done
