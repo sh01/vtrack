@@ -195,8 +195,8 @@ class MPMaster {
 		sock.AddIntent(IOI_READ);
 		this.initMsgHandlers();
 		this.observeProperty("playback-time");
-		this.observeProperty("length");
-		this.getProperty("length", &this.handleLength);
+		this.observeProperty("duration");
+		this.getProperty("duration", &this.handleLength);
 		this.setProperty("pause", false);
 
 		this.upcallInitDone = &this.noop;
@@ -276,7 +276,7 @@ class MPMaster {
 			   this.finished_file = false;
 			   this.upcallMediaTime(this);
 			   break;
-		   case "length":
+		   case "duration":
 			   this.updateLength(msg);
 			   break;
 		   default:
