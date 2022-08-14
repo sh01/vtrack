@@ -90,11 +90,6 @@ public:
 	}
 	vt_id id() { return this._id; }
 
-	alias Object.opCmp opCmp;
-	int opCmp(TShow other) {
-		return cast(int)(this._id - other._id);
-	}
-
 	static immutable string sql_write = "INTO shows(id,ts_add,title) VALUES (?,?,?);";
 	void write(SqliteStmt s) {
 		s.reset();
@@ -108,11 +103,11 @@ private:
 	vt_id _id;
 public:
 	string desc;
-	RedBlackTree!(TShow) shows;
+	TShow[long] shows;
 	this(string desc, vt_id id=-1) {
 		this._id = id;
 		this.desc = desc;
-		this.shows = new RedBlackTree!TShow();
+		this.shows = null;
 	}
 	vt_id id() { return this._id; }
 
@@ -548,7 +543,8 @@ public:
 			s2.bind(id);
 			while (s2.step()) {
 				s2.getRow(&show_id);
-				ss.shows.stableInsert(getShowById(show_id));
+                auto show = getShowById(show_id);
+				ss.shows[show._id] = show;
 			}
 		}
 		return rv;
@@ -573,7 +569,7 @@ public:
 	void addShowSetMember(TShowSet set, TShow show) {
 		this._verifyShow(show);
 		if (this.showsets[set._id] !is set) throw new StorageError(format("Attempted to manipulate unregistered show set."));
-		set.shows.stableInsert(show);
+		set.shows[show._id] = show;
 		set.write_members(this.s_showsetm_rep);
 	}
 }

@@ -3,7 +3,7 @@ import eudorina.text;
 
 import std.conv;
 import std.file;
-import std.format: to;
+import std.conv: to;
 import std.regex;
 import std.string: format, strip;
 import std.stdio;

@@ -13,13 +13,8 @@ import std.array: appender, Appender;
 import std.algorithm: find;
 import std.container: DList;
 import std.json: JSONValue, JSONException, parseJSON, toJSON, JSON_TYPE;
-import std.process: getpid;
+import core.sys.posix.unistd: getpid;
 import std.string;
-
-
-// testing ...
-import core.thread: sleep;
-
 
 alias void delegate(char[]) td_io_writer;
 alias void delegate() td_voidfunc;
@@ -166,7 +161,7 @@ class MPCommand {
 	void callback(bool success, MpMsg msg) {
 		if (this.cb is null) return;
 		if (!success) {
-			logf(30, "Command execution failed. Cmd: %s Reply: %s", cescape(toJSON(&this.msg)), cescape(toJSON(&msg)));
+			logf(30, "Command execution failed. Cmd: %s Reply: %s", cescape(toJSON(this.msg)), cescape(toJSON(msg)));
 		}
 		this.cb(success, msg);
 	}
@@ -228,7 +223,7 @@ class MPMaster {
 				logf(20, "Setting length: %f", data.floating);
 			}
 		} else {
-			logf(30, "Unable to parse mp length reply: %s", cescape(toJSON(&msg)));
+			logf(30, "Unable to parse mp length reply: %s", cescape(toJSON(msg)));
 		}
 	}
 
@@ -236,7 +231,7 @@ class MPMaster {
 		if (success) {
 			this.updateLength(msg);
 		} else {
-			logf(30, "MP length query failed: %s", cescape(toJSON(&msg)));
+			logf(30, "MP length query failed: %s", cescape(toJSON(msg)));
 		}
 		this.upcallInitDone(this);
 	}
@@ -296,7 +291,7 @@ class MPMaster {
 		try {
 			cmd = this.pending_commands.front();
 		} catch (Error exc) {
-			logf(35, "Ignoring reply for missing command: %s", cescape(toJSON(&msg)));
+			logf(35, "Ignoring reply for missing command: %s", cescape(toJSON(msg)));
 			return;
 		}
 		this.pending_commands.removeFront();
@@ -304,15 +299,8 @@ class MPMaster {
 	}
 
 	void sendCommand(JSONValue[] args, MpmCallback cb = null) {
-		JSONValue args_json;
-		args_json.type = JSON_TYPE.ARRAY;
-		args_json.array = args;
-
-		JSONValue msg;
-		msg.type = JSON_TYPE.OBJECT;
-		msg.object = [ "command": args_json ];
-
-		auto msg_text = toJSON(&msg);
+		auto msg = JSONValue([ "command": JSONValue(args)]);
+		auto msg_text = toJSON(msg);
 
 		auto cmd = new MPCommand(msg, cb);
 		this.pending_commands.insertBack(cmd);
@@ -320,10 +308,7 @@ class MPMaster {
 		this.bw.write(format("%s\n", msg_text));		
 	}
 	void observeProperty(string property) {
-		JSONValue one;
-		one.type = JSON_TYPE.INTEGER;
-		one.integer = 1;
-		this.sendCommand([JSONValue("observe_property"), one, JSONValue(property)]);
+		this.sendCommand([JSONValue("observe_property"), JSONValue(1), JSONValue(property)]);
 	}
 
 	void getProperty(string property, MpmCallback cb) {
@@ -364,7 +349,7 @@ class MPMaster {
 				logf(30, "Failed to parse mpv json %s: %s", cescape(line), cescape(exc.toString()));
 				continue;
 			}
-			//logf(10, "mp JSON: %s", cescape(toJSON(&val)));
+			//logf(10, "mp JSON: %s", cescape(toJSON(val)));
 
 			// Classify line type and pass data on.
 			JSONValue *msgtype;

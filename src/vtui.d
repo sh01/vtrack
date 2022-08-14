@@ -55,7 +55,7 @@ bool parseInt(string spec, long *o) {
 		auto fin = spec;
 		try {
 			vc = formattedRead(fin, fmt, &i);
-		} catch {
+		} catch (Throwable) {
 		}
 		if ((fin == "") && (vc == 1)) {
 			*o = i;
@@ -850,7 +850,7 @@ public:
 		TShow show;
 		try {
 			show = this.getShow(p[0]);
-		} catch (InvalidShowSpec e) {};
+		} catch (InvalidShowSpec e) {}
 		if (show !is null) {
 			p.drop();
 			// Convenience: Display eps by default if no sub-elements were specified.

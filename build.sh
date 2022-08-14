@@ -5,12 +5,12 @@ INC=include/vtrack
 LIB=obj/vtrack
 
 mkdir -p build/$INC build/$LIB build/bin 2>/dev/null
-rm -rf build/$INC/* build/$LIB/* build/bin/* 2>/dev/null
+rm -rf build/$LIB/* build/bin/* 2>/dev/null
 
 pushd build
 for bn in mpwrap base h_fnparse; do
 	ofn=${bn}.o
-	CMD0="$CC -g -o $ofn -c -fversion=Linux -I../../eudorina/build/include/ -L../../eudorina/build/lib/ -fintfc -fintfc-dir=${INC} ../src/${bn}.d"
+	CMD0="$CC -g -o $ofn -c -fversion=Linux -I../../eudorina/build/include/ -L../../eudorina/build/lib/ ../src/${bn}.d"
 	CMD1="ar rcs ${LIB}/lib${bn}.a $ofn"
 	echo $CMD0; $CMD0
 	echo $CMD1; $CMD1
