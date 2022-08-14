@@ -33,7 +33,7 @@ class MPRun {
 	this(string argv_base[], string targets[]) {
 		this.sock_name = format("/tmp/mpwrap.%d", getpid());
 		this.argv = argv_base.dup;
-		this.argv ~= ["--input-unix-socket", this.sock_name, "--pause"];
+		this.argv ~= ["--input-ipc-server=" ~ this.sock_name, "--pause"];
 		this.argv ~= targets;
 		auto p = this.p = new SubProcess();
 		p.fd_i = 0;
